@@ -1,6 +1,12 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 from config import Config
+import re
+
+_audit_events = {}
+
+# Track recent file access alerts to prevent duplicates
+_file_access = defaultdict(list)
 
 # Track failed ssh logins — key: "ip:username"
 _failed_attempts = defaultdict(list)
@@ -23,6 +29,9 @@ SENSITIVE_FILES = [
     "/.ssh/authorized_keys",
     "/root",
 ]
+
+# Exclude noisy virtual filesystems
+EXCLUDED_PATHS = ["/sys/", "/proc/", "/dev/", "/run/"]
 
 
 def analyze(parsed_entry: dict) -> dict | None:
@@ -68,9 +77,56 @@ def analyze(parsed_entry: dict) -> dict | None:
     if event == "sudo_not_allowed":
         return _check_unauthorized_sudo(parsed_entry, fields)
 
-    # ── Sensitive File Access ──────────────────────────────────────────────
-    if event == "file_access":
-        return _check_file_access(parsed_entry, fields)
+    # ── File Access ───────────────────────────────────────────────────────
+    if parsed_entry.get("log_type") == "file_access":
+        audit_type = fields.get("audit_type")
+        event_id   = fields.get("event_id")
+
+        if audit_type == "SYSCALL" and event_id:
+            _audit_events[event_id] = {
+                "auid":      fields.get("auid"),
+                "command":   fields.get("command"),
+                "exe":       fields.get("exe"),
+                "audit_key": fields.get("audit_key"),
+                "timestamp": parsed_entry["timestamp"],
+                "host":      parsed_entry.get("host"),
+                "cwd":       None,  # ← will be filled by CWD line
+            }
+            return None
+
+        if audit_type == "CWD" and event_id:
+            # Store the working directory against the event
+            if event_id in _audit_events:
+                cwd = re.search(r'cwd="([^"]+)"', parsed_entry["message"])
+                if cwd:
+                    _audit_events[event_id]["cwd"] = cwd.group(1)
+            return None
+
+        if audit_type == "PATH" and event_id:
+            syscall_info = _audit_events.pop(event_id, {})
+            filepath     = fields.get("filepath", "")
+            audit_key    = fields.get("audit_key") or syscall_info.get("audit_key")
+            auid         = syscall_info.get("auid")
+            command      = syscall_info.get("command")
+            cwd          = syscall_info.get("cwd", "")
+
+            # Resolve relative path using cwd
+            if filepath and not filepath.startswith("/"):
+                filepath = f"{cwd}/{filepath}" if cwd else filepath
+
+            merged = dict(parsed_entry)
+            merged["parsed"] = {
+                "event":     "file_access",
+                "filepath":  filepath,
+                "audit_key": audit_key,
+                "auid":      auid,
+                "command":   command,
+                "event_id":  event_id,
+            }
+
+            if audit_key == "unauthorized_access":
+                return _check_unauthorized_file_access(merged, merged["parsed"])
+            return _check_file_access(merged, merged["parsed"])
 
     return None
 
@@ -286,19 +342,85 @@ def _check_unauthorized_sudo(parsed_entry, fields):
 
 def _check_file_access(parsed_entry, fields):
     filepath = fields.get("filepath", "")
+    now      = parsed_entry["timestamp"]
+    auid     = fields.get("auid")
+    command  = fields.get("command")
+
+    if not filepath:
+        return None
+
+    # Skip system/daemon processes with no login session
+    if not auid or auid == "unset":
+        return None
 
     for sensitive in SENSITIVE_FILES:
         if sensitive in filepath:
+            # Deduplicate — only alert once per filepath per 10 seconds
+            recent = _file_access.get(filepath, [])
+            window = now - timedelta(seconds=10)
+            recent = [t for t in recent if t >= window]
+
+            if recent:
+                _file_access[filepath] = recent
+                return None
+
+            _file_access[filepath] = recent + [now]
+
             return _make_event(
                 event_type   = "sensitive_file_access",
                 severity     = "high",
                 source_ip    = None,
                 target_host  = parsed_entry.get("host"),
-                username     = None,
-                description  = f"Sensitive file accessed: {filepath}",
+                username     = auid,
+                description  = (
+                    f"Sensitive file '{filepath}' accessed "
+                    f"by '{auid}' using '{command}'"
+                ),
                 parsed_entry = parsed_entry,
             )
     return None
+
+def _check_unauthorized_file_access(parsed_entry, fields):
+    filepath = fields.get("filepath", "")
+    auid     = fields.get("auid")
+    command  = fields.get("command")
+    now      = parsed_entry["timestamp"]
+
+    if not filepath:
+        return None
+    
+    # Skip system/daemon processes with no login session
+    if not auid or auid == "unset":
+        return None
+    
+    if any(filepath.startswith(p) for p in EXCLUDED_PATHS):
+        return None
+    
+    # Deduplicate — same user hitting same file within 10 seconds
+    event_id = fields.get("event_id", "")
+    key      = f"{auid}:{filepath}:{event_id}"
+    recent   = _file_access.get(key, [])
+    window = now - timedelta(seconds=10)
+    recent = [t for t in recent if t >= window]
+
+    if recent:
+        _file_access[key] = recent
+        return None
+
+    _file_access[key] = recent + [now]
+
+    return _make_event(
+        event_type   = "unauthorized_file_access",
+        severity     = "medium",
+        source_ip    = None,
+        target_host  = parsed_entry.get("host"),
+        username     = auid,
+        description  = (
+            f"Permission denied: '{auid}' tried to access "
+            f"'{filepath}' using '{command}'"
+        ),
+        parsed_entry = parsed_entry,
+    )
 
 
 def _make_event(event_type, severity, source_ip, target_host, username, description, parsed_entry):
