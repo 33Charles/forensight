@@ -1,3 +1,21 @@
+import logging
+import colorlog
+
+handler = colorlog.StreamHandler()
+handler.setFormatter(colorlog.ColoredFormatter(
+    "%(log_color)s%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    log_colors={
+        "DEBUG":    "cyan",
+        "INFO":     "green",
+        "WARNING":  "yellow",
+        "ERROR":    "red",
+        "CRITICAL": "bold_red",
+    }
+))
+
+logging.root.setLevel(logging.INFO)
+logging.root.addHandler(handler)
+
 from flask import Flask
 from flask_socketio import SocketIO
 from flask_cors import CORS

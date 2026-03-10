@@ -55,7 +55,7 @@ def parse(raw: str) -> dict:
 
     entry = {
         "timestamp":   ts,
-        "source_host": hostname,
+        "host":        hostname,
         "process":     process.lower(),
         "pid":         int(pid) if pid else None,
         "message":     message,

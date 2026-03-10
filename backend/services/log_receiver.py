@@ -27,7 +27,7 @@ class LogReceiver:
         self._running = True
         thread = threading.Thread(target=self._listen, daemon=True)
         thread.start()
-        print(f"Log receiver listening on {self.host}:{self.port} (TCP)")
+        logger.info(f"Log receiver listening on {self.host}:{self.port} (TCP)")
 
     def stop(self):
         self._running = False
@@ -92,7 +92,7 @@ class LogReceiver:
 
         self.socketio.emit("log_entry", {
             "timestamp":   parsed["timestamp"].isoformat(),
-            "source_host": parsed["source_host"],
+            "host":        parsed["host"],
             "process":     parsed["process"],
             "log_type":    parsed["log_type"],
             "message":     parsed["message"],
@@ -102,7 +102,7 @@ class LogReceiver:
         from models.log_entry import LogEntry
         entry = LogEntry(
             timestamp   = parsed["timestamp"],
-            source_host = parsed["source_host"],
+            host        = parsed["host"],
             process     = parsed["process"],
             pid         = parsed["pid"],
             message     = parsed["message"],
@@ -120,6 +120,7 @@ class LogReceiver:
             event_type  = event["event_type"],
             severity    = event["severity"],
             source_ip   = event.get("source_ip"),
+            target_host = event.get("target_host"), 
             username    = event.get("username"),
             description = event["description"],
             raw_log_id  = log_id,
@@ -134,6 +135,7 @@ def suspicious_event_to_dict(event: dict) -> dict:
         "event_type":  event["event_type"],
         "severity":    event["severity"],
         "source_ip":   event.get("source_ip"),
+        "target_host": event.get("target_host"),
         "username":    event.get("username"),
         "description": event["description"],
         "timestamp":   event["timestamp"].isoformat(),
