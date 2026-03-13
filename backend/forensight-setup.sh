@@ -178,6 +178,9 @@ cat > "$AUDIT_RULES" <<EOF
 -a always,exit -F arch=b64 -S open -F exit=-EPERM -k unauthorized_access
 -a always,exit -F arch=b64 -S openat -F exit=-EACCES -k unauthorized_access
 -a always,exit -F arch=b64 -S openat -F exit=-EPERM -k unauthorized_access
+
+# ── Network connection monitoring ─────────────────────────────────────────────
+-a always,exit -F arch=b64 -S connect -k network_connect
 EOF
 
 success "Audit rules written to $AUDIT_RULES"

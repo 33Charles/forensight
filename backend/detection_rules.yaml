@@ -1,0 +1,160 @@
+# =============================================================================
+# Forensight Detection Rules Configuration
+# =============================================================================
+# Modify thresholds, severities, and rules here without touching the code.
+# Changes take effect after: POST /api/rules/reload
+
+# ── SSH Brute Force ───────────────────────────────────────────────────────────
+brute_force:
+  enabled: true
+  mitre_technique: "T1110"
+  mitre_tactic: "Credential Access"
+  description: "Detects repeated failed SSH login attempts from the same IP"
+  window_seconds: 60
+  thresholds:
+    medium: 5
+    high: 10
+    critical: 20
+
+# ── Root Login Attempt ────────────────────────────────────────────────────────
+root_login:
+  enabled: true
+  mitre_technique: "T1078"
+  mitre_tactic: "Initial Access"
+  description: "Detects SSH login attempts targeting the root account"
+  severity: high
+
+# ── Sudo Failures ─────────────────────────────────────────────────────────────
+sudo_brute_force:
+  enabled: true
+  mitre_technique: "T1548.003"
+  mitre_tactic: "Privilege Escalation"
+  description: "Detects repeated sudo authentication failures"
+  window_seconds: 60
+  threshold: 3
+  severity: high
+
+# ── Unauthorized Sudo ─────────────────────────────────────────────────────────
+unauthorized_sudo:
+  enabled: true
+  mitre_technique: "T1548.003"
+  mitre_tactic: "Privilege Escalation"
+  description: "Detects sudo attempts by users not in the sudoers file"
+  severity: medium
+  dedup_window_seconds: 10
+
+# ── Privilege Escalation ──────────────────────────────────────────────────────
+privilege_escalation:
+  enabled: true
+  mitre_technique: "T1548"
+  mitre_tactic: "Privilege Escalation"
+
+  shell_spawn:
+    enabled: true
+    severity: critical
+    description: "Detects spawning of a root shell"
+    commands:
+      - "/bin/bash"
+      - "/bin/sh"
+      - "/bin/zsh"
+      - "sudo su"
+      - "sudo -i"
+      - "sudo -s"
+
+  sudoers_modification:
+    enabled: true
+    severity: critical
+    description: "Detects modification of the sudoers file"
+    patterns:
+      - "visudo"
+      - "/etc/sudoers"
+
+  group_modification:
+    enabled: true
+    severity: critical
+    description: "Detects adding a user to a privileged group"
+    groups:
+      - "sudo"
+      - "admin"
+      - "wheel"
+
+  user_creation:
+    enabled: true
+    severity: high
+    description: "Detects creation of new user accounts"
+    commands:
+      - "useradd"
+      - "adduser"
+
+  password_change:
+    enabled: true
+    severity: high
+    description: "Detects changing another user's password"
+
+# ── Sensitive File Access ─────────────────────────────────────────────────────
+sensitive_file_access:
+  enabled: true
+  mitre_technique: "T1003"
+  mitre_tactic: "Credential Access"
+  description: "Detects access to sensitive system files"
+  severity: high
+  dedup_window_seconds: 10
+  paths:
+    - "/etc/passwd"
+    - "/etc/shadow"
+    - "/etc/sudoers"
+    - "/etc/ssh/sshd_config"
+    - "/.ssh/authorized_keys"
+    - "/root"
+
+# ── Unauthorized File Access ──────────────────────────────────────────────────
+unauthorized_file_access:
+  enabled: true
+  mitre_technique: "T1083"
+  mitre_tactic: "Discovery"
+  description: "Detects permission denied errors on file access attempts"
+  severity: medium
+  dedup_window_seconds: 30
+  excluded_paths:
+    - "/sys/"
+    - "/proc/"
+    - "/dev/"
+    - "/run/"
+
+# ── Port Scan Detection ───────────────────────────────────────────────────────
+port_scan:
+  enabled: true
+  mitre_technique: "T1046"
+  mitre_tactic: "Discovery"
+  description: "Detects rapid connections to multiple ports from the same process"
+  severity: high
+  window_seconds: 10        # time window to count unique ports
+  port_threshold: 15        # unique ports within window to trigger alert
+
+# ── Reverse Shell Detection ───────────────────────────────────────────────────
+reverse_shell:
+  enabled: true
+  mitre_technique: "T1059"
+  mitre_tactic: "Execution"
+  description: "Detects shell processes making outbound network connections"
+  severity: critical
+  shell_executables:
+    - "/bin/bash"
+    - "/bin/sh"
+    - "/bin/zsh"
+    - "python"
+    - "perl"
+    - "ruby"
+    - "nc"
+    - "ncat"
+    - "netcat"
+
+# ── C2 Beaconing Detection ────────────────────────────────────────────────────
+c2_detection:
+  enabled: true
+  mitre_technique: "T1071"
+  mitre_tactic: "Command and Control"
+  description: "Detects repeated outbound connections to the same external IP"
+  severity: critical
+  window_seconds: 300       # 5 minute window
+  connection_threshold: 10  # connections to same IP within window

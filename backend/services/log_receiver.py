@@ -6,14 +6,11 @@ from services.detector import analyze
 
 logger = logging.getLogger(__name__)
 
+# SQLite cannot handle concurrent writes — serialize all DB operations
+_db_lock = threading.Lock()
+
 
 class LogReceiver:
-    """
-    TCP server that listens for incoming rsyslog messages.
-    Each connection is handled in a separate thread.
-    On receiving a log line it: parses → analyzes → saves → emits via socketio.
-    """
-
     def __init__(self, app, db, socketio, host="0.0.0.0", port=5140):
         self.app      = app
         self.db       = db
@@ -23,7 +20,6 @@ class LogReceiver:
         self._running = False
 
     def start(self):
-        """Start the TCP listener in a background thread."""
         self._running = True
         thread = threading.Thread(target=self._listen, daemon=True)
         thread.start()
@@ -52,13 +48,11 @@ class LogReceiver:
 
     def _handle_client(self, conn, addr):
         logger.info(f"New log source connected: {addr}")
-        
-        # Keep connection alive
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        
+
         buffer = ""
         with conn:
-            conn.settimeout(300)  # 5 minute timeout instead of closing immediately
+            conn.settimeout(300)
             while True:
                 try:
                     data = conn.recv(4096).decode("utf-8", errors="ignore")
@@ -68,14 +62,13 @@ class LogReceiver:
                     while "\n" in buffer:
                         line, buffer = buffer.split("\n", 1)
                         self._process_line(line.strip())
-
                 except socket.timeout:
-                    continue  # timeout is fine, just keep waiting
+                    continue
                 except Exception as e:
                     logger.error(f"Error handling client {addr}: {e}")
                     break
 
-    def _process_line(self, raw: str):
+    def _process_line(self, raw: str, source: str = "live"):
         if not raw:
             return
 
@@ -83,60 +76,75 @@ class LogReceiver:
         if not parsed:
             return
 
-        with self.app.app_context():
-            log_entry = self._save_log_entry(parsed)  # ← capture the returned entry
-            suspicious = analyze(parsed)
-            if suspicious:
-                self._save_suspicious_event(suspicious, log_entry.id)  # ← pass the id
-                self.socketio.emit("suspicious_event", suspicious_event_to_dict(suspicious))
+        # Run detection outside the lock — pure in-memory, no DB needed
+        suspicious = analyze(parsed)
+
+        # Serialize all DB writes to prevent SQLite locking
+        with _db_lock:
+            try:
+                with self.app.app_context():
+                    log_entry = self._save_log_entry(parsed, source)
+                    if suspicious:
+                        self._save_suspicious_event(suspicious, log_entry.id, source)
+                        self.socketio.emit("suspicious_event", _suspicious_to_dict(suspicious))
+            except Exception as e:
+                logger.error(f"DB write error: {e}")
+                return
 
         self.socketio.emit("log_entry", {
-            "timestamp":   parsed["timestamp"].isoformat(),
-            "host":        parsed["host"],
-            "process":     parsed["process"],
-            "log_type":    parsed["log_type"],
-            "message":     parsed["message"],
+            "timestamp": parsed["timestamp"].isoformat(),
+            "host":      parsed["host"],
+            "process":   parsed["process"],
+            "log_type":  parsed["log_type"],
+            "message":   parsed["message"],
+            "source":    source,
         })
 
-    def _save_log_entry(self, parsed: dict):
+    def _save_log_entry(self, parsed: dict, source: str = "live"):
         from models.log_entry import LogEntry
         entry = LogEntry(
-            timestamp   = parsed["timestamp"],
-            host        = parsed["host"],
-            process     = parsed["process"],
-            pid         = parsed["pid"],
-            message     = parsed["message"],
-            log_type    = parsed["log_type"],
-            raw         = parsed["raw"],
+            timestamp = parsed["timestamp"],
+            host      = parsed["host"],
+            process   = parsed["process"],
+            pid       = parsed["pid"],
+            message   = parsed["message"],
+            log_type  = parsed["log_type"],
+            raw       = parsed["raw"],
+            source    = source,
         )
         self.db.session.add(entry)
         self.db.session.commit()
         return entry
-        
-    def _save_suspicious_event(self, event: dict, log_id: int):
+
+    def _save_suspicious_event(self, event: dict, log_id: int, source: str = "live"):
         from models.log_entry import SuspiciousEvent
         se = SuspiciousEvent(
-            timestamp   = event["timestamp"],
-            event_type  = event["event_type"],
-            severity    = event["severity"],
-            source_ip   = event.get("source_ip"),
-            target_host = event.get("target_host"), 
-            username    = event.get("username"),
-            description = event["description"],
-            raw_log_id  = log_id,
-            status      = "open",
+            timestamp       = event["timestamp"],
+            event_type      = event["event_type"],
+            severity        = event["severity"],
+            source_ip       = event.get("source_ip"),
+            target_host     = event.get("target_host"),
+            username        = event.get("username"),
+            description     = event["description"],
+            raw_log_id      = log_id,
+            status          = "open",
+            source          = source,
+            mitre_technique = event.get("mitre_technique"),
+            mitre_tactic    = event.get("mitre_tactic"),
         )
         self.db.session.add(se)
         self.db.session.commit()
 
 
-def suspicious_event_to_dict(event: dict) -> dict:
+def _suspicious_to_dict(event: dict) -> dict:
     return {
-        "event_type":  event["event_type"],
-        "severity":    event["severity"],
-        "source_ip":   event.get("source_ip"),
-        "target_host": event.get("target_host"),
-        "username":    event.get("username"),
-        "description": event["description"],
-        "timestamp":   event["timestamp"].isoformat(),
+        "event_type":      event["event_type"],
+        "severity":        event["severity"],
+        "source_ip":       event.get("source_ip"),
+        "target_host":     event.get("target_host"),
+        "username":        event.get("username"),
+        "description":     event["description"],
+        "timestamp":       event["timestamp"].isoformat(),
+        "mitre_technique": event.get("mitre_technique"),
+        "mitre_tactic":    event.get("mitre_tactic"),
     }

@@ -3,3 +3,6 @@ flask-sqlalchemy==3.1.1
 flask-socketio==5.3.6
 flask-cors==4.0.0
 python-socketio==5.10.0
+flask-jwt-extended==4.6.0
+bcrypt==4.1.2
+pyyaml==6.0.1
