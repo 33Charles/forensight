@@ -2,7 +2,12 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from services.config_loader import get_rule, is_enabled
 import re
+import threading
+import time
 
+# Thread-safe correlation dicts — SYSCALL and SOCKADDR arrive on different
+# rsyslog TCP connections processed by different threads
+_events_lock   = threading.Lock()
 _audit_events  = {}
 _net_events    = {}   # correlate SYSCALL + SOCKADDR by event_id
 
@@ -15,6 +20,8 @@ _unauthorized_sudo = defaultdict(list)
 _port_scan         = defaultdict(set)   # key: "auid:exe" → set of dst_ports
 _port_scan_times   = defaultdict(list)  # key: "auid:exe" → list of timestamps
 _c2_connections    = defaultdict(list)  # key: "auid:dst_ip" → list of timestamps
+_inbound_scan      = defaultdict(set)   # key: src_ip → set of dst_ports
+_inbound_scan_times= defaultdict(list)  # key: src_ip → list of timestamps
 
 
 def _SENSITIVE_FILES():
@@ -29,13 +36,12 @@ def _EXCLUDED_PATHS():
     ])
 
 # Internal IPs to exclude from network alerts (RFC1918 + loopback)
-INTERNAL_PREFIXES = ["127.", "10.", "192.168.", "172.16.", "172.17.",
-                     "172.18.", "172.19.", "172.20.", "172.21.", "172.22.",
-                     "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
-                     "172.28.", "172.29.", "172.30.", "172.31.", "0.0.0.0"]
+LOOPBACK_PREFIXES = ["127.", "0.0.0.0"]
 
-def _is_internal(ip: str) -> bool:
-    return any(ip.startswith(p) for p in INTERNAL_PREFIXES)
+def _is_loopback(ip: str) -> bool:
+    """Only skip actual loopback — not all RFC1918. Lab environments use
+    private IPs for real attack traffic (e.g. reverse shells to Kali)."""
+    return any(ip.startswith(p) for p in LOOPBACK_PREFIXES)
 
 
 def analyze(parsed_entry: dict) -> dict | None:
@@ -84,8 +90,7 @@ def analyze(parsed_entry: dict) -> dict | None:
         event_id   = fields.get("event_id")
 
         if audit_type == "SYSCALL" and event_id:
-            # Store SYSCALL info — used by both file access and network detectors
-            _audit_events[event_id] = {
+            info = {
                 "auid":      fields.get("auid"),
                 "command":   fields.get("command"),
                 "exe":       fields.get("exe"),
@@ -94,17 +99,22 @@ def analyze(parsed_entry: dict) -> dict | None:
                 "host":      parsed_entry.get("host"),
                 "cwd":       None,
             }
+            # Store in BOTH dicts under lock — SOCKADDR and PATH arrive on
+            # separate threads so plain dict writes are not guaranteed visible
+            with _events_lock:
+                _audit_events[event_id] = info
+                _net_events[event_id]   = info
             return None
 
         if audit_type == "CWD" and event_id:
-            if event_id in _audit_events:
-                cwd = re.search(r'cwd="([^"]+)"', parsed_entry["message"])
-                if cwd:
-                    _audit_events[event_id]["cwd"] = cwd.group(1)
+            with _events_lock:
+                if event_id in _audit_events:
+                    cwd = re.search(r'cwd="([^"]+)"', parsed_entry["message"])
+                    if cwd:
+                        _audit_events[event_id]["cwd"] = cwd.group(1)
             return None
 
         if audit_type == "SOCKADDR" and event_id:
-            # Network connection — correlate with SYSCALL info
             dst_ip   = fields.get("dst_ip", "")
             dst_port = fields.get("dst_port")
             family   = fields.get("family", "")
@@ -113,10 +123,22 @@ def analyze(parsed_entry: dict) -> dict | None:
             if not dst_ip or not dst_port or not family:
                 return None
 
-            syscall_info = _audit_events.get(event_id, {})
-            auid         = syscall_info.get("auid")
-            exe          = syscall_info.get("exe", "")
-            command      = syscall_info.get("command", "")
+            # Retry up to 5 times with 20ms sleep — SYSCALL may arrive on a
+            # different thread slightly after SOCKADDR due to rsyslog buffering
+            syscall_info = {}
+            for _ in range(5):
+                with _events_lock:
+                    if event_id in _net_events:
+                        syscall_info = _net_events.pop(event_id)
+                        break
+                time.sleep(0.02)
+
+            auid    = syscall_info.get("auid")
+            exe     = syscall_info.get("exe", "unknown")
+            command = syscall_info.get("command", exe)
+
+            # Fall back to exe when auid=unset (root/system processes)
+            identity = auid if (auid and auid != "unset") else exe
 
             merged = dict(parsed_entry)
             merged["parsed"] = {
@@ -124,7 +146,7 @@ def analyze(parsed_entry: dict) -> dict | None:
                 "dst_ip":   dst_ip,
                 "dst_port": dst_port,
                 "family":   family,
-                "auid":     auid,
+                "auid":     identity,
                 "exe":      exe,
                 "command":  command,
                 "event_id": event_id,
@@ -133,7 +155,8 @@ def analyze(parsed_entry: dict) -> dict | None:
             return _check_network(merged, merged["parsed"])
 
         if audit_type == "PATH" and event_id:
-            syscall_info = _audit_events.pop(event_id, {})
+            with _events_lock:
+                syscall_info = _audit_events.pop(event_id, {})
             filepath     = fields.get("filepath", "")
             audit_key    = fields.get("audit_key") or syscall_info.get("audit_key")
             auid         = syscall_info.get("auid")
@@ -157,6 +180,10 @@ def analyze(parsed_entry: dict) -> dict | None:
                 return _check_unauthorized_file_access(merged, merged["parsed"])
             if is_enabled("sensitive_file_access"):
                 return _check_file_access(merged, merged["parsed"])
+
+    # ── Inbound Port Scan (iptables) ──────────────────────────────────────
+    if fields.get("event") == "inbound_scan" and is_enabled("port_scan"):
+        return _check_inbound_scan(parsed_entry, fields)
 
     return None
 
@@ -452,8 +479,8 @@ def _check_network(parsed_entry, fields):
     if not dst_ip or not dst_port:
         return None
 
-    # Skip unauthenticated system processes
-    if not auid or auid == "unset":
+    # Skip if we have no identity at all to attribute the connection to
+    if not auid:
         return None
 
     # ── Port Scan Detection ──────────────────────────────────────────────
@@ -484,7 +511,7 @@ def _check_network(parsed_entry, fields):
                 target_host  = host,
                 username     = auid,
                 description  = (
-                    f"Port scan detected: '{command}' contacted {unique_ports} unique ports "
+                    f"Outbound port scan: '{command}' contacted {unique_ports} unique ports "
                     f"within {window}s"
                 ),
                 parsed_entry = parsed_entry,
@@ -494,9 +521,12 @@ def _check_network(parsed_entry, fields):
     if is_enabled("reverse_shell"):
         shell_exes  = get_rule("reverse_shell.shell_executables",
             ["/bin/bash", "/bin/sh", "/bin/zsh", "python", "perl", "ruby", "nc", "ncat", "netcat"])
+        whitelist   = get_rule("reverse_shell.whitelist_executables",
+            ["rsyslogd", "sshd", "systemd", "auditd", "audisp"])
         suspicious  = any(s in exe for s in shell_exes)
+        whitelisted = any(s in exe for s in whitelist)
 
-        if suspicious and not _is_internal(dst_ip):
+        if suspicious and not whitelisted and not _is_loopback(dst_ip):
             return _make_event(
                 event_type   = "reverse_shell",
                 severity     = get_rule("reverse_shell.severity", "critical"),
@@ -511,7 +541,7 @@ def _check_network(parsed_entry, fields):
             )
 
     # ── C2 Beaconing Detection ───────────────────────────────────────────
-    if is_enabled("c2_detection") and not _is_internal(dst_ip):
+    if is_enabled("c2_detection") and not _is_loopback(dst_ip):
         window    = get_rule("c2_detection.window_seconds", 300)
         threshold = get_rule("c2_detection.connection_threshold", 10)
         key       = f"{auid}:{dst_ip}"
@@ -540,6 +570,48 @@ def _check_network(parsed_entry, fields):
     return None
 
 
+def _check_inbound_scan(parsed_entry, fields):
+    src_ip   = fields.get("src_ip")
+    dst_port = fields.get("dst_port")
+    host     = parsed_entry.get("host")
+    now      = parsed_entry["timestamp"]
+
+    if not src_ip or not dst_port:
+        return None
+
+    window    = get_rule("port_scan.window_seconds", 10)
+    threshold = get_rule("port_scan.inbound_port_threshold", 5)
+
+    # Track unique ports per source IP within window
+    _inbound_scan_times[src_ip].append(now)
+    _inbound_scan_times[src_ip] = [
+        t for t in _inbound_scan_times[src_ip]
+        if t >= now - timedelta(seconds=window)
+    ]
+
+    # Reset port set when window expires (only one timestamp = fresh window)
+    if len(_inbound_scan_times[src_ip]) == 1:
+        _inbound_scan[src_ip] = set()
+
+    _inbound_scan[src_ip].add(dst_port)
+    unique_ports = len(_inbound_scan[src_ip])
+
+    if unique_ports == threshold:
+        return _make_event(
+            event_type   = "port_scan",
+            severity     = get_rule("port_scan.severity", "high"),
+            source_ip    = src_ip,
+            target_host  = host,
+            username     = None,
+            description  = (
+                f"Inbound port scan: {src_ip} probed {unique_ports} unique ports "
+                f"on {host} within {window}s"
+            ),
+            parsed_entry = parsed_entry,
+        )
+    return None
+
+
 # Maps event_type to config key for MITRE lookup
 _MITRE_MAP = {
     "brute_force":              "brute_force",
@@ -554,6 +626,7 @@ _MITRE_MAP = {
     "reverse_shell":            "reverse_shell",
     "c2_connection":            "c2_detection",
     "ssh_login_success":        None,
+    
 }
 
 def _make_event(event_type, severity, source_ip, target_host, username, description, parsed_entry):

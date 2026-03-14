@@ -122,14 +122,18 @@ unauthorized_file_access:
     - "/run/"
 
 # ── Port Scan Detection ───────────────────────────────────────────────────────
+# Covers both directions:
+#   Outbound — detected via auditd connect() syscall (process scanning other hosts)
+#   Inbound  — detected via iptables SYN logging (external host scanning this machine)
 port_scan:
   enabled: true
   mitre_technique: "T1046"
   mitre_tactic: "Discovery"
-  description: "Detects rapid connections to multiple ports from the same process"
+  description: "Detects port scans in both directions — outbound via auditd, inbound via iptables"
   severity: high
   window_seconds: 10        # time window to count unique ports
-  port_threshold: 15        # unique ports within window to trigger alert
+  port_threshold: 15        # unique ports within window to trigger alert (outbound)
+  inbound_port_threshold: 5 # unique ports within window to trigger alert (inbound)
 
 # ── Reverse Shell Detection ───────────────────────────────────────────────────
 reverse_shell:
@@ -148,6 +152,12 @@ reverse_shell:
     - "nc"
     - "ncat"
     - "netcat"
+  whitelist_executables:    # never flag these even if they match shell names
+    - "rsyslogd"
+    - "sshd"
+    - "systemd"
+    - "auditd"
+    - "audisp"
 
 # ── C2 Beaconing Detection ────────────────────────────────────────────────────
 c2_detection:
@@ -158,3 +168,15 @@ c2_detection:
   severity: critical
   window_seconds: 300       # 5 minute window
   connection_threshold: 10  # connections to same IP within window
+  whitelist_ports:          # never flag connections to these ports
+    - 5140                  # Forensight log receiver
+    - 53                    # DNS
+    - 123                   # NTP
+  whitelist_executables:    # never flag these processes
+    - "rsyslogd"
+    - "sshd"
+    - "systemd"
+    - "auditd"
+    - "audisp"
+    - "systemd-resolved"
+    - "nmap"

@@ -47,6 +47,15 @@ AUDIT_EXE       = re.compile(r'exe="([^"]+)"')
 AUDIT_SUCCESS   = re.compile(r'success=(\w+)')
 AUDIT_SADDR     = re.compile(r'saddr=([0-9A-Fa-f]+)')
 
+# iptables port scan patterns (from kernel LOG target)
+IPTABLES_PORTSCAN = re.compile(r'PORTSCAN_IN: ')
+IPTABLES_SRC      = re.compile(r'SRC=([\d\.]+)')
+IPTABLES_DST      = re.compile(r'DST=([\d\.]+)')
+IPTABLES_SPT      = re.compile(r'SPT=(\d+)')
+IPTABLES_DPT      = re.compile(r'DPT=(\d+)')
+IPTABLES_PROTO    = re.compile(r'PROTO=(\w+)')
+IPTABLES_SYN      = re.compile(r'SYN')
+
 TZ_OFFSET = re.compile(r'([+-])(\d{2}):(\d{2})$')
 
 
@@ -156,8 +165,9 @@ def _classify(process: str, message: str) -> str:
     if "sudo" in process:
         return "sudo"
     if "audisp-syslog" in process or "audisp" in process:
-        # Network connect syscall logs also come through audisp-syslog
-        if "network_connect" in message or "process_exec" in message:
+        # Route network_connect SYSCALL and SOCKADDR lines to "network"
+        # so the detector handles them separately from file_access
+        if 'key="network_connect"' in message or "type=SOCKADDR" in message:
             return "network"
         return "file_access"
     if "audit" in process or message.startswith("type="):
@@ -258,6 +268,22 @@ def _extract_fields(process: str, message: str) -> dict:
             auid = AUDIT_AUID.search(message)
             fields["auid"] = auid.group(1) if auid else None
 
+        return fields
+
+    # ── iptables inbound port scan ────────────────────────────────────────
+    if "PORTSCAN_IN:" in message:
+        src = IPTABLES_SRC.search(message)
+        dst = IPTABLES_DST.search(message)
+        spt = IPTABLES_SPT.search(message)
+        dpt = IPTABLES_DPT.search(message)
+        proto = IPTABLES_PROTO.search(message)
+        fields["event"]    = "inbound_scan"
+        fields["src_ip"]   = src.group(1) if src else None
+        fields["dst_ip"]   = dst.group(1) if dst else None
+        fields["src_port"] = int(spt.group(1)) if spt else None
+        fields["dst_port"] = int(dpt.group(1)) if dpt else None
+        fields["protocol"] = proto.group(1) if proto else "TCP"
+        fields["syn"]      = bool(IPTABLES_SYN.search(message))
         return fields
 
     return fields

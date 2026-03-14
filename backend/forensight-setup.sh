@@ -80,6 +80,9 @@ if \$programname == 'audisp-syslog' then        @@${FORENSIGHT_SERVER}:${FORENSI
 
 # Forward su logs
 if \$programname == 'su' then                   @@${FORENSIGHT_SERVER}:${FORENSIGHT_PORT}
+
+# Forward iptables port scan logs (kernel messages with PORTSCAN_IN prefix)
+if \$msg contains 'PORTSCAN_IN: ' then          @@${FORENSIGHT_SERVER}:${FORENSIGHT_PORT}
 EOF
 
 success "rsyslog config written to $RSYSLOG_CONF"
@@ -179,7 +182,7 @@ cat > "$AUDIT_RULES" <<EOF
 -a always,exit -F arch=b64 -S openat -F exit=-EACCES -k unauthorized_access
 -a always,exit -F arch=b64 -S openat -F exit=-EPERM -k unauthorized_access
 
-# ── Network connection monitoring ─────────────────────────────────────────────
+# ── Network connection monitoring (outbound) ──────────────────────────────────
 -a always,exit -F arch=b64 -S connect -k network_connect
 EOF
 
@@ -213,7 +216,50 @@ else
 fi
 
 # =============================================================================
-# SECTION 3: CONNECTIVITY TEST
+# SECTION 3: IPTABLES INBOUND PORT SCAN DETECTION
+# =============================================================================
+echo ""
+info "Configuring iptables inbound port scan logging..."
+
+# Install iptables-persistent to survive reboots
+if ! dpkg -l | grep -q iptables-persistent; then
+    info "Installing iptables-persistent..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent &>/dev/null
+    success "iptables-persistent installed"
+fi
+
+# Remove existing Forensight iptables rules to avoid duplicates on re-run
+iptables -D INPUT -p tcp --syn -m state --state NEW \
+    -m limit --limit 20/s --limit-burst 50 \
+    -j LOG --log-prefix "PORTSCAN_IN: " --log-level 4 2>/dev/null || true
+
+iptables -D INPUT -p udp \
+    -m limit --limit 20/s --limit-burst 50 \
+    -j LOG --log-prefix "PORTSCAN_IN: " --log-level 4 2>/dev/null || true
+
+# Add fresh rules — log new inbound TCP SYN and UDP packets
+# Rate limited to avoid log flooding during heavy scans
+iptables -A INPUT -p tcp --syn -m state --state NEW \
+    -m limit --limit 20/s --limit-burst 50 \
+    -j LOG --log-prefix "PORTSCAN_IN: " --log-level 4
+
+iptables -A INPUT -p udp \
+    -m limit --limit 20/s --limit-burst 50 \
+    -j LOG --log-prefix "PORTSCAN_IN: " --log-level 4
+
+# Persist rules across reboots
+netfilter-persistent save &>/dev/null
+success "iptables rules added and persisted"
+
+# Verify kernel logging to syslog is enabled
+if ! grep -q "PORTSCAN_IN" /etc/rsyslog.d/50-forensight.conf 2>/dev/null; then
+    warning "rsyslog may not be forwarding kernel messages — check rsyslog config"
+else
+    success "rsyslog configured to forward PORTSCAN_IN messages"
+fi
+
+# =============================================================================
+# SECTION 4: CONNECTIVITY TEST
 # =============================================================================
 echo ""
 info "Testing connectivity to Forensight server ${FORENSIGHT_SERVER}:${FORENSIGHT_PORT}..."
@@ -226,7 +272,7 @@ else
 fi
 
 # =============================================================================
-# SECTION 4: VERIFICATION
+# SECTION 5: VERIFICATION
 # =============================================================================
 echo ""
 info "Running verification checks..."
@@ -256,6 +302,12 @@ else
     warning "No audit rules loaded"
 fi
 
+if iptables -L INPUT -n | grep -q "PORTSCAN_IN"; then
+    success "iptables port scan logging is active"
+else
+    warning "iptables port scan rules not found"
+fi
+
 # =============================================================================
 # SUMMARY
 # =============================================================================
@@ -268,6 +320,7 @@ echo -e "  Forwarding logs to: ${BLUE}${FORENSIGHT_SERVER}:${FORENSIGHT_PORT}${N
 echo -e "  rsyslog config:     ${BLUE}${RSYSLOG_CONF}${NC}"
 echo -e "  Audit rules:        ${BLUE}${AUDIT_RULES}${NC}"
 echo -e "  audisp-syslog:      ${BLUE}${AUDISP_SYSLOG_CONF}${NC}"
+echo -e "  iptables rules:     ${BLUE}active (inbound port scan logging)${NC}"
 echo ""
 echo -e "  To verify logs are flowing run on the server:"
 echo -e "  ${YELLOW}curl http://localhost:5000/api/stats${NC}"

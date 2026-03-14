@@ -75,6 +75,7 @@ class LogReceiver:
         parsed = parse(raw)
         if not parsed:
             return
+        
 
         # Run detection outside the lock — pure in-memory, no DB needed
         suspicious = analyze(parsed)
