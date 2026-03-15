@@ -75,7 +75,6 @@ class LogReceiver:
         parsed = parse(raw)
         if not parsed:
             return
-        
 
         # Run detection outside the lock — pure in-memory, no DB needed
         suspicious = analyze(parsed)
@@ -86,8 +85,9 @@ class LogReceiver:
                 with self.app.app_context():
                     log_entry = self._save_log_entry(parsed, source)
                     if suspicious:
-                        self._save_suspicious_event(suspicious, log_entry.id, source)
-                        self.socketio.emit("suspicious_event", _suspicious_to_dict(suspicious))
+                        se = self._save_suspicious_event(suspicious, log_entry.id, source)
+                        # Emit the full DB object so frontend gets id, status, source
+                        self.socketio.emit("suspicious_event", se.to_dict())
             except Exception as e:
                 logger.error(f"DB write error: {e}")
                 return
@@ -135,6 +135,7 @@ class LogReceiver:
         )
         self.db.session.add(se)
         self.db.session.commit()
+        return se 
 
 
 def _suspicious_to_dict(event: dict) -> dict:

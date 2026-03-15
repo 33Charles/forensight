@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from models.log_entry import LogEntry, SuspiciousEvent
 from database.db import db
 from datetime import datetime, timedelta
@@ -79,17 +79,31 @@ def update_event_status(event_id):
     if not event:
         return jsonify({"error": "Event not found"}), 404
 
-    data   = request.get_json()
-    status = data.get("status")
+    data        = request.get_json()
+    status      = data.get("status")
+    current_user = get_jwt_identity()  # username from JWT token
 
     if status not in ["open", "investigating", "resolved"]:
         return jsonify({"error": "Invalid status"}), 400
 
     event.status = status
-    if status == "resolved":
+
+    if status == "investigating":
+        event.investigated_by = current_user
+        # Clear resolved fields if re-opening investigation
+        event.resolved_at  = None
+        event.resolved_by  = None
+
+    elif status == "resolved":
+        event.resolved_by = current_user
         event.resolved_at = datetime.utcnow()
-    else:
-        event.resolved_at = None
+        # Keep investigated_by intact — shows full audit trail
+
+    elif status == "open":
+        # Reset all tracking when re-opened
+        event.investigated_by = None
+        event.resolved_by     = None
+        event.resolved_at     = None
 
     db.session.commit()
     return jsonify(event.to_dict())

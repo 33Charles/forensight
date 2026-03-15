@@ -31,20 +31,22 @@ class LogEntry(db.Model):
 class SuspiciousEvent(db.Model):
     __tablename__ = "suspicious_events"
 
-    id              = db.Column(db.Integer, primary_key=True)
-    timestamp       = db.Column(db.DateTime, default=datetime.utcnow)
-    event_type      = db.Column(db.String(100))
-    severity        = db.Column(db.String(20))
-    source_ip       = db.Column(db.String(50), nullable=True)
-    target_host     = db.Column(db.String(100), nullable=True)
-    username        = db.Column(db.String(100), nullable=True)
-    description     = db.Column(db.Text)
-    raw_log_id      = db.Column(db.Integer, db.ForeignKey("log_entries.id"), nullable=True)
-    status          = db.Column(db.String(20), default="open")
-    resolved_at     = db.Column(db.DateTime, nullable=True)
-    source          = db.Column(db.String(20), default="live")
-    mitre_technique = db.Column(db.String(50), nullable=True)
-    mitre_tactic    = db.Column(db.String(100), nullable=True)
+    id               = db.Column(db.Integer, primary_key=True)
+    timestamp        = db.Column(db.DateTime, default=datetime.utcnow)
+    event_type       = db.Column(db.String(100))
+    severity         = db.Column(db.String(20))
+    source_ip        = db.Column(db.String(50),  nullable=True)
+    target_host      = db.Column(db.String(100), nullable=True)
+    username         = db.Column(db.String(100), nullable=True)
+    description      = db.Column(db.Text)
+    raw_log_id       = db.Column(db.Integer, db.ForeignKey("log_entries.id"), nullable=True)
+    status           = db.Column(db.String(20), default="open")
+    resolved_at      = db.Column(db.DateTime,    nullable=True)
+    source           = db.Column(db.String(20),  default="live")
+    mitre_technique  = db.Column(db.String(50),  nullable=True)
+    mitre_tactic     = db.Column(db.String(100), nullable=True)
+    investigated_by  = db.Column(db.String(100), nullable=True)  # username of investigator
+    resolved_by      = db.Column(db.String(100), nullable=True)  # username of resolver
 
     def to_dict(self):
         return {
@@ -62,4 +64,6 @@ class SuspiciousEvent(db.Model):
             "source":          self.source,
             "mitre_technique": self.mitre_technique,
             "mitre_tactic":    self.mitre_tactic,
+            "investigated_by": self.investigated_by,
+            "resolved_by":     self.resolved_by,
         }
