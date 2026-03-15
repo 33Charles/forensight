@@ -28,7 +28,8 @@ export function severityColor(s) {
 
 export function formatTime(iso) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleString('en-GB', {
+  // Append 'Z' so JS knows this is UTC, then convert to browser local time
+  return new Date(iso + 'Z').toLocaleString('en-GB', {
     day:    '2-digit',
     month:  'short',
     hour:   '2-digit',
@@ -44,8 +45,8 @@ export function formatEventType(t) {
 export function timeAgo(iso) {
   const diff = Date.now() - new Date(iso + 'Z').getTime()
   const s = Math.floor(diff / 1000)
-  if (s < 60)   return `${s}s ago`
-  if (s < 3600) return `${Math.floor(s/60)}m ago`
-  if (s < 86400)return `${Math.floor(s/3600)}h ago`
+  if (s < 60)    return `${s}s ago`
+  if (s < 3600)  return `${Math.floor(s/60)}m ago`
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`
   return `${Math.floor(s/86400)}d ago`
 }

@@ -29,7 +29,7 @@ export default function App() {
             <Route path="logs"    element={<Logs />} />
             <Route path="hosts"   element={<Hosts />} />
             <Route path="ingest"  element={
-              <ProtectedRoute role="analyst"><Ingest /></ProtectedRoute>
+              <ProtectedRoute><Ingest /></ProtectedRoute>
             } />
             <Route path="users"   element={
               <ProtectedRoute role="admin"><Users /></ProtectedRoute>
