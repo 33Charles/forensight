@@ -1,12 +1,19 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models.log_entry import LogEntry, SuspiciousEvent
+from models.user import User
 from database.db import db
 from datetime import datetime, timedelta
 from sqlalchemy import func
 from services.auth import jwt_required_with_role
 
 api = Blueprint("api", __name__, url_prefix="/api")
+
+
+def _is_admin(username):
+    """Check if a username belongs to an admin user."""
+    user = User.query.filter_by(username=username, is_active=True).first()
+    return user and user.role == "admin"
 
 
 # ── Log Entries ────────────────────────────────────────────────────────────────
@@ -71,39 +78,103 @@ def update_event_status(event_id):
     data         = request.get_json()
     status       = data.get("status")
     current_user = get_jwt_identity()
+    admin        = _is_admin(current_user)
 
     if status not in ["open", "investigating", "resolved"]:
         return jsonify({"error": "Invalid status"}), 400
 
-    # ── Ownership enforcement ──────────────────────────────────────────────────
-    # If event is being investigated, only the investigator can change its status
+    # ── Ownership enforcement ──────────────────────────────────────────────
+
+    # open + assigned — only assignee or admin can take action
+    if event.status == "open" and event.assigned_to:
+        if event.assigned_to != current_user and not admin:
+            return jsonify({
+                "error": f"This event is assigned to '{event.assigned_to}'"
+            }), 403
+
+    # investigating — only investigator can change status
+    # admin can reassign via /assign endpoint but cannot skip to resolved
     if event.status == "investigating" and event.investigated_by:
         if event.investigated_by != current_user:
-            return jsonify({
-                "error": f"This event is being investigated by '{event.investigated_by}'"
-            }), 403
+            if admin and status == "resolved":
+                # Admin cannot resolve on behalf of investigator —
+                # they must reassign first
+                return jsonify({
+                    "error": f"Cannot resolve on behalf of '{event.investigated_by}' — reassign the event first"
+                }), 403
+            elif not admin:
+                return jsonify({
+                    "error": f"Being investigated by '{event.investigated_by}'"
+                }), 403
 
-    # If event is resolved, only the resolver can change its status
+    # resolved — only resolver OR admin can reopen
     if event.status == "resolved" and event.resolved_by:
-        if event.resolved_by != current_user:
+        if event.resolved_by != current_user and not admin:
             return jsonify({
-                "error": f"This event was resolved by '{event.resolved_by}'"
+                "error": "Resolved events can only be reopened by the resolver or an admin"
             }), 403
 
+    # ── Apply status change ────────────────────────────────────────────────
     event.status = status
 
     if status == "investigating":
         event.investigated_by = current_user
         event.resolved_at     = None
         event.resolved_by     = None
+        event.assigned_to     = None  # clear assignment — now being handled
+
     elif status == "resolved":
         event.resolved_by = current_user
         event.resolved_at = datetime.utcnow()
+
     elif status == "open":
+        # Reopening — clear all tracking, assignment handled separately
         event.investigated_by = None
         event.resolved_by     = None
         event.resolved_at     = None
+        event.notes           = None
+        event.reopened_at     = datetime.utcnow()
+        # assigned_to set via assign endpoint, not here
 
+    db.session.commit()
+    return jsonify(event.to_dict())
+
+
+@api.route("/events/<int:event_id>/assign", methods=["PATCH"])
+@jwt_required_with_role("manage_users")
+def assign_event(event_id):
+    """
+    Assign or reassign an event to a user. Admin only.
+    Works on open and investigating events.
+    Reassigning an investigating event resets it to open so the
+    new assignee starts fresh — full audit trail preserved.
+    Body: { "assigned_to": "username" | null }
+    null = unassign
+    """
+    event = db.session.get(SuspiciousEvent, event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+
+    if event.status == "resolved":
+        return jsonify({"error": "Use the reopen endpoint for resolved events"}), 400
+
+    data        = request.get_json()
+    assigned_to = data.get("assigned_to")
+
+    # Validate assignee exists and is active
+    if assigned_to:
+        assignee = User.query.filter_by(username=assigned_to, is_active=True).first()
+        if not assignee:
+            return jsonify({"error": f"User '{assigned_to}' not found or inactive"}), 404
+
+    # If reassigning an investigating event — reset to open so new assignee
+    # starts fresh. Notes are preserved for continuity.
+    if event.status == "investigating":
+        event.status          = "open"
+        event.investigated_by = None
+        event.reopened_at     = datetime.utcnow()
+
+    event.assigned_to = assigned_to
     db.session.commit()
     return jsonify(event.to_dict())
 
@@ -111,29 +182,24 @@ def update_event_status(event_id):
 @api.route("/events/<int:event_id>/notes", methods=["PATCH"])
 @jwt_required_with_role("update_status")
 def update_event_notes(event_id):
-    """
-    Notes ownership rules:
-    - open        → notes not allowed
-    - investigating → only investigated_by can write/update
-    - resolved    → only resolved_by can write/update, all others read-only
-    """
     event        = db.session.get(SuspiciousEvent, event_id)
     if not event:
         return jsonify({"error": "Event not found"}), 404
 
     current_user = get_jwt_identity()
+    admin        = _is_admin(current_user)
 
     if event.status == "open":
-        return jsonify({"error": "Notes are only available for events under investigation or resolved"}), 403
+        return jsonify({"error": "Notes only available for events under investigation or resolved"}), 403
 
     if event.status == "investigating" and event.investigated_by:
-        if event.investigated_by != current_user:
+        if event.investigated_by != current_user and not admin:
             return jsonify({
                 "error": f"Only '{event.investigated_by}' can update notes while investigating"
             }), 403
 
     if event.status == "resolved" and event.resolved_by:
-        if event.resolved_by != current_user:
+        if event.resolved_by != current_user and not admin:
             return jsonify({
                 "error": f"Only '{event.resolved_by}' can update notes on a resolved event"
             }), 403

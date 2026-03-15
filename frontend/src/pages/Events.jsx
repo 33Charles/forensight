@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   ChevronDown, ChevronUp, RefreshCw, Filter, Download,
   X, Search, CheckSquare, Square, Clock, Zap,
-  List, Layers, Plus, MessageSquare, ChevronsUpDown, ArrowUp, ArrowDown
+  List, Layers, Plus, MessageSquare, ChevronsUpDown, ArrowUp, ArrowDown, UserPlus
 } from 'lucide-react'
 import api from '../utils/api'
 import { useAuth } from '../context/AuthContext'
@@ -215,8 +215,320 @@ function NotesEditor({ event, onUpdate, currentUser }) {
   )
 }
 
+// ── AssignModal ───────────────────────────────────────────────────────────────
+// mode: 'assign' (open events) | 'reopen' (resolved events)
+function AssignModal({ event, mode, onClose, onAssigned, onReopened }) {
+  const [analysts,  setAnalysts]  = useState([])
+  const [saving,    setSaving]    = useState(false)
+  const [error,     setError]     = useState('')
+  const { user }                  = useAuth()
+
+  useEffect(() => {
+    api.get('/users').then(r => {
+      setAnalysts(r.data.filter(u => u.is_active && u.role !== 'viewer'))
+    })
+  }, [])
+
+  const handleAssign = async (username) => {
+    setSaving(true)
+    setError('')
+    try {
+      const { data } = await api.patch(`/events/${event.id}/assign`, { assigned_to: username })
+      onAssigned(data)
+      onClose()
+    } catch (err) {
+      setError(err.response?.data?.error ?? 'Failed to assign')
+      setSaving(false)
+    }
+  }
+
+  const handleReopen = async (username) => {
+    setSaving(true)
+    setError('')
+    try {
+      // Reopen first
+      const { data } = await api.patch(`/events/${event.id}/status`, { status: 'open' })
+      // Then assign
+      if (username) {
+        const assigned = await api.patch(`/events/${event.id}/assign`, { assigned_to: username })
+        onReopened(assigned.data)
+      } else {
+        onReopened(data)
+      }
+      onClose()
+    } catch (err) {
+      setError(err.response?.data?.error ?? 'Failed to reopen')
+      setSaving(false)
+    }
+  }
+
+  const handleAction = (username) => {
+    if (mode === 'reopen') handleReopen(username)
+    else handleAssign(username)
+  }
+
+  const isReopen = mode === 'reopen'
+
+  return (
+    <div className="fixed inset-0 bg-bg/80 backdrop-blur-sm flex items-center
+                    justify-center z-50 animate-fade-in"
+         onClick={onClose}>
+      <div className="card w-full max-w-sm border-border/80 animate-slide-in"
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="font-display font-bold text-text flex items-center gap-2">
+            <UserPlus size={15} className={isReopen ? 'text-medium' : 'text-accent'} />
+            {isReopen ? 'Reopen & Assign' : 'Assign Event'}
+          </h3>
+          <button onClick={onClose} className="text-subtle hover:text-dim">
+            <X size={15} />
+          </button>
+        </div>
+
+        <p className="text-xs text-dim font-mono mb-4">
+          {isReopen
+            ? 'Reopen this event and assign it to an analyst for re-investigation'
+            : 'Assign to an analyst to investigate this event'
+          }
+        </p>
+
+        <div className="space-y-2 mb-3 max-h-56 overflow-y-auto pr-1">
+          {/* Assign to self */}
+          <button
+            onClick={() => handleAction(user?.username)}
+            disabled={saving}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg
+                       bg-accent/15 border border-accent/30 hover:bg-accent/25
+                       transition-colors text-left disabled:opacity-40"
+          >
+            <div className="w-7 h-7 rounded-lg bg-accent/30 flex items-center justify-center
+                            text-accent text-xs font-bold uppercase shrink-0">
+              {user?.username?.[0]}
+            </div>
+            <div>
+              <p className="text-sm text-text font-medium">{user?.username}</p>
+              <p className="text-xs text-accent font-mono">assign to myself</p>
+            </div>
+          </button>
+
+          {analysts.filter(a => a.username !== user?.username).length > 0 && (
+            <p className="text-xs text-subtle font-mono uppercase tracking-widest px-1 pt-1">
+              Other analysts
+            </p>
+          )}
+
+          {analysts
+            .filter(a => a.username !== user?.username)
+            .map(a => (
+              <button
+                key={a.username}
+                onClick={() => handleAction(a.username)}
+                disabled={saving}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg
+                           border border-border hover:bg-muted/50 hover:border-accent/30
+                           transition-colors text-left disabled:opacity-40"
+              >
+                <div className="w-7 h-7 rounded-lg bg-muted flex items-center justify-center
+                                text-dim text-xs font-bold uppercase shrink-0">
+                  {a.username[0]}
+                </div>
+                <div>
+                  <p className="text-sm text-text font-medium">{a.username}</p>
+                  <p className="text-xs text-subtle font-mono capitalize">{a.role}</p>
+                </div>
+              </button>
+            ))
+          }
+        </div>
+
+        {/* Reopen without assigning option */}
+        {isReopen && (
+          <button
+            onClick={() => handleReopen(null)}
+            disabled={saving}
+            className="w-full text-xs text-dim border border-dashed border-border
+                       rounded-lg py-2 hover:text-text hover:border-subtle
+                       transition-colors mb-2 disabled:opacity-40"
+          >
+            Reopen without assigning
+          </button>
+        )}
+
+        {/* Unassign option for assign mode */}
+        {!isReopen && event.assigned_to && (
+          <button
+            onClick={() => handleAssign(null)}
+            disabled={saving}
+            className="w-full text-xs text-dim border border-dashed border-border
+                       rounded-lg py-2 hover:text-critical hover:border-critical/30
+                       transition-colors mb-2 disabled:opacity-40"
+          >
+            Remove assignment
+          </button>
+        )}
+
+        {error && (
+          <p className="text-xs text-critical font-mono mt-1">{error}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── StatusControls ────────────────────────────────────────────────────────────
+function StatusControls({ event, currentUser, isAdmin, updating, onStatus, onAssign, onReopen }) {
+  const isInvestigating = event.status === 'investigating'
+  const isResolved      = event.status === 'resolved'
+  const isOpen          = event.status === 'open'
+
+  const lockedToOther =
+    (isOpen          && event.assigned_to    && event.assigned_to    !== currentUser && !isAdmin) ||
+    (isInvestigating && event.investigated_by && event.investigated_by !== currentUser && !isAdmin) ||
+    (isResolved      && event.resolved_by      && event.resolved_by      !== currentUser && !isAdmin)
+
+  // ── Locked to another user ────────────────────────────────────────────
+  if (lockedToOther) {
+    if (isOpen) {
+      return (
+        <p className="text-xs font-mono flex items-center gap-1.5 px-3 py-2
+                      bg-surface rounded-lg border border-border/50 text-subtle">
+          🔒 Assigned to
+          <span className="text-accent font-semibold">{event.assigned_to}</span>
+          — awaiting investigation
+        </p>
+      )
+    }
+    if (isInvestigating) {
+      return (
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-xs font-mono flex items-center gap-1.5 px-3 py-2
+                        bg-surface rounded-lg border border-border/50 text-subtle flex-1">
+            🔒 Being handled by
+            <span className="text-medium font-semibold">{event.investigated_by}</span>
+          </p>
+          {isAdmin && (
+            <button
+              onClick={e => { e.stopPropagation(); onAssign(event) }}
+              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border
+                         border-medium/35 text-medium/80 bg-medium/8 hover:text-medium
+                         hover:border-medium/60 hover:bg-medium/15 transition-colors font-medium"
+            >
+              <UserPlus size={11} />
+              Force Reassign
+            </button>
+          )}
+        </div>
+      )
+    }
+    if (isResolved) {
+      return (
+        <p className="text-xs font-mono flex items-center gap-1.5 px-3 py-2
+                      bg-surface rounded-lg border border-border/50 text-subtle">
+          🔒 Resolved — contact admin to reopen
+        </p>
+      )
+    }
+  }
+
+  // ── Resolved — admin sees Reopen button ───────────────────────────────
+  if (isResolved && (isAdmin || event.resolved_by === currentUser)) {
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Normal status buttons for resolver */}
+        {['open','investigating','resolved'].map(s => (
+          s !== 'open' ? (
+            <button key={s} disabled={updating || event.status === s}
+              onClick={(e) => onStatus(e, s)}
+              className={`text-xs px-3 py-1.5 rounded-lg border transition-all capitalize font-medium
+                ${event.status === s
+                  ? 'bg-accent/25 text-accent border-accent/40'
+                  : 'text-text/80 border-border/80 bg-surface/60 hover:border-accent/50 hover:text-white'
+                } disabled:opacity-40`}>
+              {s}
+            </button>
+          ) : null
+        ))}
+        {/* Reopen button — opens modal */}
+        <button
+          onClick={e => { e.stopPropagation(); onReopen(event) }}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border
+                     border-medium/40 text-medium bg-medium/10 hover:bg-medium/20
+                     hover:border-medium/60 transition-colors font-medium"
+        >
+          <UserPlus size={11} />
+          Reopen & Assign
+          {isAdmin && <span className="text-[10px] text-medium/70 font-mono ml-0.5">⚡</span>}
+        </button>
+      </div>
+    )
+  }
+
+  // ── Open / Investigating — normal controls ────────────────────────────
+  const assignmentBanner = isOpen && event.assigned_to && (
+    <div className="flex items-center gap-2 mb-2 text-xs font-mono
+                    px-3 py-1.5 bg-accent/8 border border-accent/20 rounded-lg">
+      <UserPlus size={11} className="text-accent" />
+      <span className="text-dim">Assigned to</span>
+      <span className="text-accent font-semibold">{event.assigned_to}</span>
+      {isAdmin && (
+        <button onClick={e => { e.stopPropagation(); onAssign(event) }}
+          className="ml-auto text-subtle hover:text-accent transition-colors text-[10px]">
+          Reassign
+        </button>
+      )}
+    </div>
+  )
+
+  return (
+    <div>
+      {assignmentBanner}
+      <div className="flex gap-2 flex-wrap items-center">
+        {['open','investigating','resolved'].map(s => (
+          <button key={s}
+            disabled={updating || event.status === s}
+            onClick={(e) => onStatus(e, s)}
+            className={`text-xs px-3 py-1.5 rounded-lg border transition-all capitalize font-medium
+              ${event.status === s
+                ? 'bg-accent/25 text-accent border-accent/40'
+                : 'text-text/80 border-border/80 bg-surface/60 hover:border-accent/50 hover:text-white'
+              } disabled:opacity-40`}>
+            {s}
+          </button>
+        ))}
+
+        {/* Assign button for open events — admin only */}
+        {isOpen && isAdmin && (
+          <button
+            onClick={e => { e.stopPropagation(); onAssign(event) }}
+            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border
+                       border-accent/35 text-accent/80 bg-accent/8 hover:text-accent
+                       hover:border-accent/60 hover:bg-accent/15 transition-colors ml-auto font-medium"
+          >
+            <UserPlus size={11} />
+            {event.assigned_to ? 'Reassign' : 'Assign'}
+          </button>
+        )}
+
+        {/* Assign button for investigating events — admin only */}
+        {isInvestigating && isAdmin && (
+          <button
+            onClick={e => { e.stopPropagation(); onAssign(event) }}
+            className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg border
+                       border-accent/35 text-accent/80 bg-accent/8 hover:text-accent
+                       hover:border-accent/60 hover:bg-accent/15 transition-colors ml-auto font-medium"
+          >
+            <UserPlus size={11} />
+            Reassign
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 // ── EventRow ──────────────────────────────────────────────────────────────────
-function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, currentUser }) {
+function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, currentUser, isAdmin, onAssign, onReopen }) {
   const [expanded, setExpanded] = useState(false)
   const [updating, setUpdating] = useState(false)
 
@@ -309,6 +621,13 @@ function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, c
                       {event.resolved_by && <span className="text-low font-medium">by {event.resolved_by}</span>}
                     </p>
                   )}
+                  {event.reopened_at && (
+                    <p className="text-xs font-mono text-dim flex items-center gap-1.5">
+                      <Clock size={11} className="text-medium" />
+                      Reopened: <span className="text-medium">{formatTime(event.reopened_at)}</span>
+                      {event.assigned_to && <span className="text-medium font-medium">→ {event.assigned_to}</span>}
+                    </p>
+                  )}
                 </div>
               </div>
               {/* Notes */}
@@ -322,35 +641,15 @@ function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, c
 
               <div className="md:col-span-2">
                 <p className="text-xs text-subtle font-mono uppercase tracking-widest mb-1.5">Update Status</p>
-                {(() => {
-                  // Determine if current user can change status
-                  const isLocked =
-                    (event.status === 'investigating' && event.investigated_by && event.investigated_by !== currentUser) ||
-                    (event.status === 'resolved'      && event.resolved_by      && event.resolved_by      !== currentUser)
-                  const lockedBy = event.investigated_by || event.resolved_by
-                  return isLocked ? (
-                    <p className="text-xs text-subtle font-mono flex items-center gap-1.5
-                                  px-3 py-2 bg-surface rounded-lg border border-border/50">
-                      <span className="text-medium">🔒</span>
-                      Locked — being handled by
-                      <span className="text-medium font-medium">{lockedBy}</span>
-                    </p>
-                  ) : (
-                    <div className="flex gap-2">
-                      {['open','investigating','resolved'].map(s => (
-                        <button key={s} disabled={updating || event.status === s}
-                          onClick={(e) => handleStatus(e, s)}
-                          className={`text-xs px-3 py-1.5 rounded-lg border transition-all capitalize
-                            ${event.status === s
-                              ? 'bg-accent/20 text-accent border-accent/30 font-medium'
-                              : 'text-dim border-border hover:border-accent/30 hover:text-text'
-                            } disabled:opacity-40`}>
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  )
-                })()}
+                <StatusControls
+                  event={event}
+                  currentUser={currentUser}
+                  isAdmin={isAdmin}
+                  updating={updating}
+                  onStatus={handleStatus}
+                  onAssign={onAssign}
+                  onReopen={onReopen}
+                />
               </div>
             </div>
           </td>
@@ -361,7 +660,7 @@ function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, c
 }
 
 // ── GroupCard ─────────────────────────────────────────────────────────────────
-function GroupCard({ groupKey, events, groupByFields, selected, onSelect, onStatusChange, newEventIds }) {
+function GroupCard({ groupKey, events, groupByFields, selected, onSelect, onStatusChange, newEventIds, isAdmin, onAssign, onReopen }) {
   const [expanded,    setExpanded]    = useState(false)
   const [bulkStatus,  setBulkStatus]  = useState('')
   const [bulkLoading, setBulkLoading] = useState(false)
@@ -534,6 +833,9 @@ function GroupCard({ groupKey, events, groupByFields, selected, onSelect, onStat
                   isNew={newEventIds.has(e.id)}
                   compact
                   currentUser={currentUser}
+                  isAdmin={isAdmin}
+                  onAssign={onAssign}
+                  onReopen={onReopen}
                 />
               ))}
             </tbody>
@@ -616,6 +918,7 @@ function GroupBySelector({ groupByFields, onChange }) {
 export default function Events() {
   const { user }                          = useAuth()
   const currentUser                       = user?.username
+  const isAdmin                           = user?.role === 'admin'
   const [events,        setEvents]        = useState([])
   const [hosts,         setHosts]         = useState([])
   const [loading,       setLoading]       = useState(true)
@@ -636,6 +939,8 @@ export default function Events() {
   const [newEventIds,   setNewEventIds]   = useState(new Set())
   const [resolvedCount, setResolvedCount] = useState(0)
   const [autoRefresh,   setAutoRefresh]   = useState(false)
+  const [assignEvent,   setAssignEvent]   = useState(null) // event being assigned
+  const [reopenEvent,   setReopenEvent]   = useState(null) // event being reopened
   const [viewMode,      setViewMode]      = useState('list')    // 'list' | 'grouped'
   const [sortField,     setSortField]     = useState('timestamp')
   const [sortDir,       setSortDir]       = useState('desc')       // 'asc' | 'desc'
@@ -721,6 +1026,9 @@ export default function Events() {
       setBulkLoading(false)
     }
   }
+
+  const handleAssign  = (event) => setAssignEvent(event)
+  const handleReopen  = (event) => setReopenEvent(event)
 
   // Client-side filter (time + search)
   const filtered = events.filter(e => {
@@ -853,6 +1161,32 @@ export default function Events() {
           <RefreshCw size={13} /> Refresh
         </button>
       </PageHeader>
+
+      {/* Assignment modal */}
+      {assignEvent && (
+        <AssignModal
+          event={assignEvent}
+          mode="assign"
+          onClose={() => setAssignEvent(null)}
+          onAssigned={(updated) => {
+            setEvents(prev => prev.map(e => e.id === updated.id ? updated : e))
+            setAssignEvent(null)
+          }}
+        />
+      )}
+
+      {/* Reopen modal */}
+      {reopenEvent && (
+        <AssignModal
+          event={reopenEvent}
+          mode="reopen"
+          onClose={() => setReopenEvent(null)}
+          onReopened={(updated) => {
+            setEvents(prev => prev.map(e => e.id === updated.id ? updated : e))
+            setReopenEvent(null)
+          }}
+        />
+      )}
 
       {/* Severity badges */}
       {filtered.length > 0 && (
@@ -1018,7 +1352,8 @@ export default function Events() {
                 {sorted.map(e => (
                   <EventRow key={e.id} event={e} selected={selected.has(e.id)}
                     onSelect={toggleSelect} onStatusChange={handleStatusChange}
-                    isNew={newEventIds.has(e.id)} currentUser={currentUser} />
+                    isNew={newEventIds.has(e.id)} currentUser={currentUser}
+                    isAdmin={isAdmin} onAssign={handleAssign} onReopen={handleReopen} />
                 ))}
               </tbody>
             </table>
@@ -1047,6 +1382,9 @@ export default function Events() {
                 onSelect={toggleSelect}
                 onStatusChange={handleStatusChange}
                 newEventIds={newEventIds}
+                isAdmin={isAdmin}
+                onAssign={handleAssign}
+                onReopen={handleReopen}
               />
             ))}
           </div>

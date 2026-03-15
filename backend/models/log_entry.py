@@ -40,14 +40,16 @@ class SuspiciousEvent(db.Model):
     username         = db.Column(db.String(100), nullable=True)
     description      = db.Column(db.Text)
     raw_log_id       = db.Column(db.Integer, db.ForeignKey("log_entries.id"), nullable=True)
-    status           = db.Column(db.String(20), default="open")
+    status           = db.Column(db.String(20),  default="open")
     resolved_at      = db.Column(db.DateTime,    nullable=True)
     source           = db.Column(db.String(20),  default="live")
     mitre_technique  = db.Column(db.String(50),  nullable=True)
     mitre_tactic     = db.Column(db.String(100), nullable=True)
     investigated_by  = db.Column(db.String(100), nullable=True)
     resolved_by      = db.Column(db.String(100), nullable=True)
-    notes            = db.Column(db.Text,         nullable=True)  # analyst notes/comments
+    notes            = db.Column(db.Text,         nullable=True)
+    assigned_to      = db.Column(db.String(100), nullable=True)  # set on reopen by admin
+    reopened_at      = db.Column(db.DateTime,    nullable=True)  # when event was reopened
 
     def to_dict(self):
         return {
@@ -68,4 +70,6 @@ class SuspiciousEvent(db.Model):
             "investigated_by": self.investigated_by,
             "resolved_by":     self.resolved_by,
             "notes":           self.notes,
+            "assigned_to":     self.assigned_to,
+            "reopened_at":     self.reopened_at.isoformat() if self.reopened_at else None,
         }
