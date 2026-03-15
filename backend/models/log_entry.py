@@ -45,8 +45,9 @@ class SuspiciousEvent(db.Model):
     source           = db.Column(db.String(20),  default="live")
     mitre_technique  = db.Column(db.String(50),  nullable=True)
     mitre_tactic     = db.Column(db.String(100), nullable=True)
-    investigated_by  = db.Column(db.String(100), nullable=True)  # username of investigator
-    resolved_by      = db.Column(db.String(100), nullable=True)  # username of resolver
+    investigated_by  = db.Column(db.String(100), nullable=True)
+    resolved_by      = db.Column(db.String(100), nullable=True)
+    notes            = db.Column(db.Text,         nullable=True)  # analyst notes/comments
 
     def to_dict(self):
         return {
@@ -66,4 +67,5 @@ class SuspiciousEvent(db.Model):
             "mitre_tactic":    self.mitre_tactic,
             "investigated_by": self.investigated_by,
             "resolved_by":     self.resolved_by,
+            "notes":           self.notes,
         }

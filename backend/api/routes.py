@@ -20,12 +20,9 @@ def get_logs():
     limit    = int(request.args.get("limit", 100))
 
     query = LogEntry.query.order_by(LogEntry.timestamp.desc())
-    if log_type:
-        query = query.filter_by(log_type=log_type)
-    if host:
-        query = query.filter_by(host=host)
-    if source:
-        query = query.filter_by(source=source)
+    if log_type: query = query.filter_by(log_type=log_type)
+    if host:     query = query.filter_by(host=host)
+    if source:   query = query.filter_by(source=source)
 
     return jsonify([l.to_dict() for l in query.limit(limit).all()])
 
@@ -43,16 +40,11 @@ def get_suspicious_events():
     limit       = int(request.args.get("limit", 50))
 
     query = SuspiciousEvent.query.order_by(SuspiciousEvent.timestamp.desc())
-    if severity:
-        query = query.filter_by(severity=severity)
-    if event_type:
-        query = query.filter_by(event_type=event_type)
-    if status:
-        query = query.filter_by(status=status)
-    if target_host:
-        query = query.filter_by(target_host=target_host)
-    if source:
-        query = query.filter_by(source=source)
+    if severity:    query = query.filter_by(severity=severity)
+    if event_type:  query = query.filter_by(event_type=event_type)
+    if status:      query = query.filter_by(status=status)
+    if target_host: query = query.filter_by(target_host=target_host)
+    if source:      query = query.filter_by(source=source)
 
     return jsonify([e.to_dict() for e in query.limit(limit).all()])
 
@@ -61,50 +53,94 @@ def get_suspicious_events():
 @jwt_required_with_role("view")
 def get_open_events():
     target_host = request.args.get("target_host")
-
     query = SuspiciousEvent.query.filter(
         SuspiciousEvent.status != "resolved"
     ).order_by(SuspiciousEvent.timestamp.desc())
-
     if target_host:
         query = query.filter_by(target_host=target_host)
-
     return jsonify([e.to_dict() for e in query.all()])
 
 
 @api.route("/events/<int:event_id>/status", methods=["PATCH"])
 @jwt_required_with_role("update_status")
 def update_event_status(event_id):
-    event = db.session.get(SuspiciousEvent, event_id)
+    event        = db.session.get(SuspiciousEvent, event_id)
     if not event:
         return jsonify({"error": "Event not found"}), 404
 
-    data        = request.get_json()
-    status      = data.get("status")
-    current_user = get_jwt_identity()  # username from JWT token
+    data         = request.get_json()
+    status       = data.get("status")
+    current_user = get_jwt_identity()
 
     if status not in ["open", "investigating", "resolved"]:
         return jsonify({"error": "Invalid status"}), 400
+
+    # ── Ownership enforcement ──────────────────────────────────────────────────
+    # If event is being investigated, only the investigator can change its status
+    if event.status == "investigating" and event.investigated_by:
+        if event.investigated_by != current_user:
+            return jsonify({
+                "error": f"This event is being investigated by '{event.investigated_by}'"
+            }), 403
+
+    # If event is resolved, only the resolver can change its status
+    if event.status == "resolved" and event.resolved_by:
+        if event.resolved_by != current_user:
+            return jsonify({
+                "error": f"This event was resolved by '{event.resolved_by}'"
+            }), 403
 
     event.status = status
 
     if status == "investigating":
         event.investigated_by = current_user
-        # Clear resolved fields if re-opening investigation
-        event.resolved_at  = None
-        event.resolved_by  = None
-
+        event.resolved_at     = None
+        event.resolved_by     = None
     elif status == "resolved":
         event.resolved_by = current_user
         event.resolved_at = datetime.utcnow()
-        # Keep investigated_by intact — shows full audit trail
-
     elif status == "open":
-        # Reset all tracking when re-opened
         event.investigated_by = None
         event.resolved_by     = None
         event.resolved_at     = None
 
+    db.session.commit()
+    return jsonify(event.to_dict())
+
+
+@api.route("/events/<int:event_id>/notes", methods=["PATCH"])
+@jwt_required_with_role("update_status")
+def update_event_notes(event_id):
+    """
+    Notes ownership rules:
+    - open        → notes not allowed
+    - investigating → only investigated_by can write/update
+    - resolved    → only resolved_by can write/update, all others read-only
+    """
+    event        = db.session.get(SuspiciousEvent, event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+
+    current_user = get_jwt_identity()
+
+    if event.status == "open":
+        return jsonify({"error": "Notes are only available for events under investigation or resolved"}), 403
+
+    if event.status == "investigating" and event.investigated_by:
+        if event.investigated_by != current_user:
+            return jsonify({
+                "error": f"Only '{event.investigated_by}' can update notes while investigating"
+            }), 403
+
+    if event.status == "resolved" and event.resolved_by:
+        if event.resolved_by != current_user:
+            return jsonify({
+                "error": f"Only '{event.resolved_by}' can update notes on a resolved event"
+            }), 403
+
+    data        = request.get_json()
+    notes       = data.get("notes", "")
+    event.notes = notes.strip() if notes else None
     db.session.commit()
     return jsonify(event.to_dict())
 
@@ -123,14 +159,10 @@ def get_stats():
         log_query   = log_query.filter_by(host=target_host)
         event_query = event_query.filter_by(target_host=target_host)
 
-    total_logs   = log_query.count()
-    total_events = event_query.count()
-    open_alerts  = event_query.filter_by(status="open").count()
-
     return jsonify({
-        "total_logs":   total_logs,
-        "total_events": total_events,
-        "open_alerts":  open_alerts,
+        "total_logs":   log_query.count(),
+        "total_events": event_query.count(),
+        "open_alerts":  event_query.filter_by(status="open").count(),
         "by_severity": {
             "critical": event_query.filter_by(severity="critical").count(),
             "high":     event_query.filter_by(severity="high").count(),
@@ -165,8 +197,7 @@ def get_timeline():
     if target_host:
         query = query.filter_by(target_host=target_host)
 
-    events = query.all()
-
+    events  = query.all()
     buckets = {}
     for i in range(hours + 1):
         hour = (since + timedelta(hours=i)).strftime("%Y-%m-%d %H:00")
@@ -178,10 +209,7 @@ def get_timeline():
             buckets[hour]["total"]        += 1
             buckets[hour][event.severity] += 1
 
-    return jsonify([
-        {"hour": hour, **counts}
-        for hour, counts in sorted(buckets.items())
-    ])
+    return jsonify([{"hour": hour, **counts} for hour, counts in sorted(buckets.items())])
 
 
 # ── Top Attackers ──────────────────────────────────────────────────────────────
@@ -196,19 +224,14 @@ def get_top_attackers():
     query = db.session.query(
         SuspiciousEvent.source_ip,
         func.count(SuspiciousEvent.id).label("count")
-    ).filter(
-        SuspiciousEvent.source_ip != None,
-        SuspiciousEvent.timestamp >= since
-    )
+    ).filter(SuspiciousEvent.source_ip != None, SuspiciousEvent.timestamp >= since)
 
     if target_host:
         query = query.filter_by(target_host=target_host)
 
-    results = query.group_by(
-        SuspiciousEvent.source_ip
-    ).order_by(
-        func.count(SuspiciousEvent.id).desc()
-    ).limit(limit).all()
+    results = query.group_by(SuspiciousEvent.source_ip)\
+                   .order_by(func.count(SuspiciousEvent.id).desc())\
+                   .limit(limit).all()
 
     return jsonify([{"ip": r.source_ip, "count": r.count} for r in results])
 
@@ -234,11 +257,9 @@ def get_top_targets():
     if target_host:
         query = query.filter_by(target_host=target_host)
 
-    results = query.group_by(
-        SuspiciousEvent.username
-    ).order_by(
-        func.count(SuspiciousEvent.id).desc()
-    ).limit(limit).all()
+    results = query.group_by(SuspiciousEvent.username)\
+                   .order_by(func.count(SuspiciousEvent.id).desc())\
+                   .limit(limit).all()
 
     return jsonify([{"username": r.username, "count": r.count} for r in results])
 
@@ -258,27 +279,19 @@ def ingest_logs():
     if not file.filename:
         return jsonify({"error": "Empty filename"}), 400
 
-    processed = 0
-    saved     = 0
-    alerts    = 0
-    errors    = 0
+    processed = saved = alerts = errors = 0
 
     try:
         content = file.read().decode("utf-8", errors="ignore")
-        lines   = content.splitlines()
-
-        for line in lines:
+        for line in content.splitlines():
             line = line.strip()
             if not line:
                 continue
-
             processed += 1
-
             try:
                 parsed = parse(line)
                 if not parsed:
                     continue
-
                 entry = LogEntry(
                     timestamp = parsed["timestamp"],
                     host      = parsed["host"],
@@ -292,7 +305,6 @@ def ingest_logs():
                 db.session.add(entry)
                 db.session.flush()
                 saved += 1
-
                 suspicious = analyze(parsed)
                 if suspicious:
                     se = SuspiciousEvent(
@@ -311,24 +323,15 @@ def ingest_logs():
                     )
                     db.session.add(se)
                     alerts += 1
-
-            except Exception as e:
+            except Exception:
                 errors += 1
-                continue
-
         db.session.commit()
-
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
-    return jsonify({
-        "status":    "complete",
-        "processed": processed,
-        "saved":     saved,
-        "alerts":    alerts,
-        "errors":    errors,
-    })
+    return jsonify({"status": "complete", "processed": processed,
+                    "saved": saved, "alerts": alerts, "errors": errors})
 
 
 # ── Hosts ──────────────────────────────────────────────────────────────────────
