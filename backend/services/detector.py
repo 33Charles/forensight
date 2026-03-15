@@ -37,10 +37,17 @@ def _EXCLUDED_PATHS():
 
 # Internal IPs to exclude from network alerts (RFC1918 + loopback)
 LOOPBACK_PREFIXES = ["127.", "0.0.0.0"]
+# All-zero IPv6 — sshd/systemd binding to listening sockets, not real connections
+IPV6_BOGON = {"0000:0000:0000:0000:0000:0000:0000:0000", "::", "::0", "::1"}
 
 def _is_loopback(ip: str) -> bool:
-    """Only skip actual loopback — not all RFC1918. Lab environments use
-    private IPs for real attack traffic (e.g. reverse shells to Kali)."""
+    """Skip loopback and bogon addresses — not all RFC1918 since lab
+    environments use private IPs for real attacks (e.g. reverse shells to Kali)."""
+    if ip in IPV6_BOGON:
+        return True
+    # Catch any all-zero IPv6 regardless of formatting
+    if ":" in ip and all(c in "0: " for c in ip):
+        return True
     return any(ip.startswith(p) for p in LOOPBACK_PREFIXES)
 
 
@@ -541,7 +548,11 @@ def _check_network(parsed_entry, fields):
             )
 
     # ── C2 Beaconing Detection ───────────────────────────────────────────
-    if is_enabled("c2_detection") and not _is_loopback(dst_ip):
+    c2_whitelist_ports = get_rule("c2_detection.whitelist_ports", [5140, 53, 123])
+    c2_whitelist_exes  = get_rule("c2_detection.whitelist_executables",
+        ["rsyslogd", "sshd", "systemd", "auditd", "audisp", "systemd-resolved"])
+
+    if is_enabled("c2_detection") and not _is_loopback(dst_ip)             and dst_port not in c2_whitelist_ports             and not any(s in exe for s in c2_whitelist_exes):
         window    = get_rule("c2_detection.window_seconds", 300)
         threshold = get_rule("c2_detection.connection_threshold", 10)
         key       = f"{auid}:{dst_ip}"
