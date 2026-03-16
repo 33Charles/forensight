@@ -136,9 +136,11 @@ class LogReceiver:
         self.db.session.add(se)
         self.db.session.flush()  # get se.id before commit
 
-        # Audit log — created entry
+        # Audit log — use event timestamp not utcnow() so it matches the
+        # actual detection time, not when the DB write happened
         audit = EventAuditLog(
             event_id     = se.id,
+            timestamp    = se.timestamp,
             action       = "created",
             performed_by = "system",
             details      = f"Auto-detected: {event['event_type']} ({event['severity']})",

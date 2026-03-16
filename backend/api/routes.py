@@ -428,8 +428,15 @@ def ingest_logs():
                     )
                     db.session.add(se)
                     db.session.flush()
-                    _audit(se.id, "created", "system",
-                           f"Auto-detected: {suspicious['event_type']} ({suspicious['severity']})")
+                    # Use event timestamp not utcnow() so audit matches detection time
+                    log = EventAuditLog(
+                        event_id     = se.id,
+                        timestamp    = se.timestamp,
+                        action       = "created",
+                        performed_by = "system",
+                        details      = f"Auto-detected: {suspicious['event_type']} ({suspicious['severity']})",
+                    )
+                    db.session.add(log)
                     alerts += 1
             except Exception:
                 errors += 1
@@ -441,6 +448,65 @@ def ingest_logs():
     return jsonify({"status": "complete", "processed": processed,
                     "saved": saved, "alerts": alerts, "errors": errors})
 
+
+
+# ── Single Log Entry ──────────────────────────────────────────────────────────
+
+@api.route("/logs/<int:log_id>", methods=["GET"])
+@jwt_required_with_role("view")
+def get_log_entry(log_id):
+    """Fetch a single raw log entry by ID."""
+    entry = db.session.get(LogEntry, log_id)
+    if not entry:
+        return jsonify({"error": "Log entry not found"}), 404
+    return jsonify(entry.to_dict())
+
+
+# ── Related Events ────────────────────────────────────────────────────────────
+
+@api.route("/events/<int:event_id>/related", methods=["GET"])
+@jwt_required_with_role("view")
+def get_related_events(event_id):
+    """
+    Return events related to the given event by source_ip or username
+    within the last 7 days, excluding the event itself.
+    """
+    event = db.session.get(SuspiciousEvent, event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+
+    since = event.timestamp - timedelta(days=7)
+    related = []
+
+    # Related by source IP
+    if event.source_ip:
+        by_ip = SuspiciousEvent.query.filter(
+            SuspiciousEvent.id        != event_id,
+            SuspiciousEvent.source_ip == event.source_ip,
+            SuspiciousEvent.timestamp >= since,
+        ).order_by(SuspiciousEvent.timestamp.desc()).limit(10).all()
+        for e in by_ip:
+            d = e.to_dict()
+            d['relation'] = 'source_ip'
+            related.append(d)
+
+    # Related by username (excluding already added by IP)
+    if event.username and event.username != 'unset':
+        existing_ids = [r['id'] for r in related]
+        q = SuspiciousEvent.query.filter(
+            SuspiciousEvent.id       != event_id,
+            SuspiciousEvent.username == event.username,
+            SuspiciousEvent.timestamp >= since,
+        )
+        if existing_ids:
+            q = q.filter(SuspiciousEvent.id.notin_(existing_ids))
+        for e in q.order_by(SuspiciousEvent.timestamp.desc()).limit(10).all():
+            d = e.to_dict()
+            d['relation'] = 'username'
+            related.append(d)
+
+    related.sort(key=lambda x: x['timestamp'], reverse=True)
+    return jsonify(related[:15])
 
 # ── Hosts ──────────────────────────────────────────────────────────────────────
 

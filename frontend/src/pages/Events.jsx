@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   ChevronDown, ChevronUp, RefreshCw, Filter, Download,
   X, Search, CheckSquare, Square, Clock, Zap,
-  List, Layers, Plus, MessageSquare, ChevronsUpDown, ArrowUp, ArrowDown, UserPlus, History
+  List, Layers, Plus, MessageSquare, ChevronsUpDown, ArrowUp, ArrowDown, UserPlus, History,
+  FileText, Link, Users, Clock as ClockIcon, AlertCircle
 } from 'lucide-react'
 import api from '../utils/api'
 import { useAuth } from '../context/AuthContext'
@@ -90,6 +92,188 @@ function SortableHeader({ label, field, sortField, sortDir, onSort }) {
         </span>
       </span>
     </th>
+  )
+}
+
+// ── RawLogViewer ─────────────────────────────────────────────────────────────
+function RawLogViewer({ rawLogId }) {
+  const [log,     setLog]     = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [open,    setOpen]    = useState(false)
+  const [error,   setError]   = useState('')
+
+  const load = (e) => {
+    e.stopPropagation()
+    if (open) { setOpen(false); return }
+    if (!rawLogId) return
+    setOpen(true)
+    if (log) return  // already loaded
+    setLoading(true)
+    api.get(`/logs/${rawLogId}`)
+      .then(r => setLog(r.data))
+      .catch(() => setError('Failed to load raw log'))
+      .finally(() => setLoading(false))
+  }
+
+  if (!rawLogId) return null
+
+  return (
+    <div>
+      <button
+        onClick={load}
+        className="flex items-center gap-1.5 text-xs font-mono text-dim
+                   hover:text-accent transition-colors"
+      >
+        <FileText size={11} className={open ? 'text-accent' : ''} />
+        {open ? 'Hide raw log' : 'View raw log'}
+        {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+      </button>
+
+      {open && (
+        <div className="mt-2 animate-slide-in">
+          {loading ? (
+            <div className="h-10 bg-muted/40 rounded-lg animate-pulse" />
+          ) : error ? (
+            <p className="text-xs text-critical font-mono">{error}</p>
+          ) : log ? (
+            <div className="bg-bg border border-border/60 rounded-lg p-3 space-y-1.5">
+              <div className="flex gap-4 text-[10px] font-mono text-subtle flex-wrap">
+                <span>Host: <span className="text-accent">{log.host}</span></span>
+                <span>Process: <span className="text-text/70">{log.process}</span></span>
+                {log.pid && <span>PID: <span className="text-text/70">{log.pid}</span></span>}
+                <span>Type: <span className="text-info">{log.log_type}</span></span>
+                <span>Source: <span className={log.source === 'live' ? 'text-low' : 'text-accent'}>{log.source}</span></span>
+              </div>
+              <p className="text-[11px] font-mono text-text/80 break-all leading-relaxed
+                            border-t border-border/40 pt-1.5 mt-1.5">
+                {log.raw}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── RelatedEvents ─────────────────────────────────────────────────────────────
+function RelatedEvents({ eventId, sourceIp, username }) {
+  const [events,  setEvents]  = useState([])
+  const [loading, setLoading] = useState(false)
+  const [open,    setOpen]    = useState(false)
+  const [error,   setError]   = useState('')
+
+  const load = (e) => {
+    e.stopPropagation()
+    if (open) { setOpen(false); return }
+    setOpen(true)
+    if (events.length) return
+    setLoading(true)
+    api.get(`/events/${eventId}/related`)
+      .then(r => setEvents(r.data))
+      .catch(() => setError('Failed to load related events'))
+      .finally(() => setLoading(false))
+  }
+
+  const RELATION_COLORS = {
+    source_ip: 'text-critical bg-critical/10 border-critical/20',
+    username:  'text-medium bg-medium/10 border-medium/20',
+  }
+
+  return (
+    <div>
+      <button
+        onClick={load}
+        className="flex items-center gap-1.5 text-xs font-mono text-dim
+                   hover:text-accent transition-colors"
+      >
+        <Users size={11} className={open ? 'text-accent' : ''} />
+        {open ? 'Hide related' : 'Related events'}
+        {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+      </button>
+
+      {open && (
+        <div className="mt-2 animate-slide-in">
+          {loading ? (
+            <div className="space-y-1.5">
+              {[1,2].map(i => <div key={i} className="h-8 bg-muted/40 rounded-lg animate-pulse" />)}
+            </div>
+          ) : error ? (
+            <p className="text-xs text-critical font-mono">{error}</p>
+          ) : events.length === 0 ? (
+            <p className="text-xs text-subtle font-mono italic">No related events found</p>
+          ) : (
+            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+              {events.map(e => (
+                <div key={e.id}
+                  className="flex items-center gap-2 px-3 py-2 bg-surface/60
+                             border border-border/50 rounded-lg text-xs">
+                  <SeverityBadge severity={e.severity} />
+                  <span className="text-text/80 font-mono flex-1 truncate">
+                    {e.event_type.replace(/_/g,' ')}
+                  </span>
+                  <span className={`badge border text-[10px] font-mono
+                                    ${RELATION_COLORS[e.relation] ?? 'text-dim bg-muted border-border'}`}>
+                    {e.relation === 'source_ip' ? e.source_ip : e.username}
+                  </span>
+                  <span className="text-subtle font-mono text-[10px] whitespace-nowrap">
+                    {formatTime(e.timestamp)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── EventAge ──────────────────────────────────────────────────────────────────
+function EventAge({ timestamp, status }) {
+  if (status !== 'open') return null
+  const ageMs  = Date.now() - new Date(timestamp + 'Z').getTime()
+  const ageH   = ageMs / 3600000
+  const label  = ageH < 1
+    ? `${Math.floor(ageMs/60000)}m`
+    : ageH < 24
+    ? `${Math.floor(ageH)}h`
+    : `${Math.floor(ageH/24)}d`
+
+  const color = ageH > 24 ? 'text-critical bg-critical/10 border-critical/20'
+              : ageH > 6  ? 'text-medium bg-medium/10 border-medium/20'
+                           : 'text-low bg-low/10 border-low/20'
+  return (
+    <span className={`badge border text-[10px] font-mono ml-1 ${color}`}
+          title={`Open for ${label}`}>
+      {label}
+    </span>
+  )
+}
+
+// ── CopyPermalink ─────────────────────────────────────────────────────────────
+function CopyPermalink({ eventId }) {
+  const [copied, setCopied] = useState(false)
+
+  const copy = (e) => {
+    e.stopPropagation()
+    const url = `${window.location.origin}/events?expand=${eventId}`
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <button
+      onClick={copy}
+      className="flex items-center gap-1 text-xs font-mono text-dim
+                 hover:text-accent transition-colors"
+      title="Copy permalink"
+    >
+      <Link size={11} className={copied ? 'text-low' : ''} />
+      {copied ? 'Copied!' : 'Permalink'}
+    </button>
   )
 }
 
@@ -650,8 +834,12 @@ function StatusControls({ event, currentUser, isAdmin, updating, onStatus, onAss
 
 
 // ── EventRow ──────────────────────────────────────────────────────────────────
-function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, currentUser, isAdmin, onAssign, onReopen }) {
+function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, currentUser, isAdmin, onAssign, onReopen, autoExpand }) {
   const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    if (autoExpand) setExpanded(true)
+  }, [autoExpand])
   const [updating, setUpdating] = useState(false)
 
   const handleStatus = async (e, status) => {
@@ -668,6 +856,7 @@ function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, c
   return (
     <>
       <tr
+        id={`event-row-${event.id}`}
         className={`border-b border-border/50 cursor-pointer transition-all duration-300
                     ${isNew ? 'bg-accent/10' : 'hover:bg-muted/30'}
                     ${selected ? 'bg-accent/5 border-l-2 border-l-accent' : ''}
@@ -696,6 +885,7 @@ function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, c
         <td className="px-3 py-2.5 font-mono text-subtle whitespace-nowrap">
           {isNew && <Zap size={10} className="inline text-accent mr-1" />}
           {formatTime(event.timestamp)}
+          <EventAge timestamp={event.timestamp} status={event.status} />
         </td>
         <td className="px-3 py-2.5 text-dim">
           {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
@@ -737,6 +927,18 @@ function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, c
                   Analyst Notes
                 </p>
                 <NotesEditor event={event} onUpdate={onStatusChange} currentUser={currentUser} />
+              </div>
+
+              {/* Tools row */}
+              <div className="md:col-span-2 flex items-center gap-5 pt-1
+                              border-t border-border/30">
+                <RawLogViewer rawLogId={event.raw_log_id} />
+                <RelatedEvents
+                  eventId={event.id}
+                  sourceIp={event.source_ip}
+                  username={event.username}
+                />
+                <CopyPermalink eventId={event.id} />
               </div>
 
               <div className="md:col-span-2">
@@ -1039,8 +1241,12 @@ export default function Events() {
   const [newEventIds,   setNewEventIds]   = useState(new Set())
   const [resolvedCount, setResolvedCount] = useState(0)
   const [autoRefresh,   setAutoRefresh]   = useState(false)
-  const [assignEvent,   setAssignEvent]   = useState(null) // event being assigned
-  const [reopenEvent,   setReopenEvent]   = useState(null) // event being reopened
+  const [assignEvent,   setAssignEvent]   = useState(null)
+  const [reopenEvent,   setReopenEvent]   = useState(null)
+  const [page,          setPage]          = useState(1)
+  const PAGE_SIZE                         = 50
+  const [searchParams,  setSearchParams]  = useSearchParams()
+  const expandId                          = searchParams.get('expand')
   const [viewMode,      setViewMode]      = useState('list')    // 'list' | 'grouped'
   const [sortField,     setSortField]     = useState('timestamp')
   const [sortDir,       setSortDir]       = useState('desc')       // 'asc' | 'desc'
@@ -1110,8 +1316,8 @@ export default function Events() {
   }
 
   const toggleSelectAll = () => {
-    if (selected.size === sorted.length) setSelected(new Set())
-    else setSelected(new Set(sorted.map(e => e.id)))
+    if (selected.size === paginated.length) setSelected(new Set())
+    else setSelected(new Set(paginated.map(e => e.id)))
   }
 
   const handleBulkUpdate = async () => {
@@ -1169,6 +1375,40 @@ export default function Events() {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
     else { setSortField(field); setSortDir('asc') }
   }
+
+  // Pagination
+  const totalPages  = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated   = viewMode === 'list'
+    ? sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+    : sorted
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1) }, [severity, status, type, host, source, timeRange, search])
+
+  // Auto-expand event from permalink — retry until element renders
+  useEffect(() => {
+    if (!expandId || loading) return
+    let attempts = 0
+    const tryExpand = () => {
+      const el = document.getElementById(`event-row-${expandId}`)
+      if (el) {
+        // Clear status filter so event is visible regardless of status
+        setStatus('')
+        setShowResolved(true)
+        setTimeout(() => {
+          const el2 = document.getElementById(`event-row-${expandId}`)
+          if (el2) {
+            el2.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            el2.click()
+          }
+        }, 300)
+      } else if (attempts < 10) {
+        attempts++
+        setTimeout(tryExpand, 200)
+      }
+    }
+    tryExpand()
+  }, [expandId, loading])
 
   // Group filtered events
   const groups = groupByFields.length > 0
@@ -1432,8 +1672,8 @@ export default function Events() {
                 <tr className="border-b border-border bg-surface/60">
                   <th className="px-3 py-3 w-8" onClick={toggleSelectAll}>
                     <div className={`cursor-pointer transition-colors
-                                     ${selected.size===sorted.length && sorted.length>0 ? 'text-accent' : 'text-subtle hover:text-dim'}`}>
-                      {selected.size===sorted.length && sorted.length>0
+                                     ${selected.size===paginated.length && paginated.length>0 ? 'text-accent' : 'text-subtle hover:text-dim'}`}>
+                      {selected.size===paginated.length && paginated.length>0
                         ? <CheckSquare size={14} /> : <Square size={14} />}
                     </div>
                   </th>
@@ -1449,15 +1689,60 @@ export default function Events() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map(e => (
+                {paginated.map(e => (
                   <EventRow key={e.id} event={e} selected={selected.has(e.id)}
                     onSelect={toggleSelect} onStatusChange={handleStatusChange}
                     isNew={newEventIds.has(e.id)} currentUser={currentUser}
-                    isAdmin={isAdmin} onAssign={handleAssign} onReopen={handleReopen} />
+                    isAdmin={isAdmin} onAssign={handleAssign} onReopen={handleReopen}
+                    autoExpand={expandId === String(e.id)} />
                 ))}
               </tbody>
             </table>
           </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3
+                            border-t border-border bg-surface/40">
+              <p className="text-xs text-dim font-mono">
+                Showing {(page - 1) * PAGE_SIZE + 1} to {Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+              </p>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setPage(1)} disabled={page === 1}
+                  className="px-2 py-1 text-xs font-mono text-dim border border-border
+                             rounded hover:text-text hover:border-accent/40 disabled:opacity-30 transition-colors">
+                  {'<<'}
+                </button>
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                  className="px-2 py-1 text-xs font-mono text-dim border border-border
+                             rounded hover:text-text hover:border-accent/40 disabled:opacity-30 transition-colors">
+                  {'<'}
+                </button>
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  const start = Math.max(1, Math.min(page - 2, totalPages - 4))
+                  const p     = start + i
+                  return p <= totalPages ? (
+                    <button key={p} onClick={() => setPage(p)}
+                      className={`px-2.5 py-1 text-xs font-mono rounded border transition-colors
+                        ${p === page
+                          ? 'bg-accent/20 text-accent border-accent/40 font-medium'
+                          : 'text-dim border-border hover:text-text hover:border-accent/40'}`}>
+                      {p}
+                    </button>
+                  ) : null
+                })}
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                  className="px-2 py-1 text-xs font-mono text-dim border border-border
+                             rounded hover:text-text hover:border-accent/40 disabled:opacity-30 transition-colors">
+                  {'>'}
+                </button>
+                <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
+                  className="px-2 py-1 text-xs font-mono text-dim border border-border
+                             rounded hover:text-text hover:border-accent/40 disabled:opacity-30 transition-colors">
+                  {'>>'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
       ) : (
