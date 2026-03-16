@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   ChevronDown, ChevronUp, RefreshCw, Filter, Download,
   X, Search, CheckSquare, Square, Clock, Zap,
-  List, Layers, Plus, MessageSquare, ChevronsUpDown, ArrowUp, ArrowDown, UserPlus
+  List, Layers, Plus, MessageSquare, ChevronsUpDown, ArrowUp, ArrowDown, UserPlus, History
 } from 'lucide-react'
 import api from '../utils/api'
 import { useAuth } from '../context/AuthContext'
@@ -90,6 +90,128 @@ function SortableHeader({ label, field, sortField, sortDir, onSort }) {
         </span>
       </span>
     </th>
+  )
+}
+
+// ── AuditTrail ───────────────────────────────────────────────────────────────
+const ACTION_CONFIG = {
+  created:         { color: 'text-accent',   bg: 'bg-accent/15',   border: 'border-accent/25',   label: 'Detected'         },
+  investigating:   { color: 'text-medium',   bg: 'bg-medium/15',   border: 'border-medium/25',   label: 'Investigation'    },
+  resolved:        { color: 'text-low',      bg: 'bg-low/15',      border: 'border-low/25',      label: 'Resolved'         },
+  reopened:        { color: 'text-high',     bg: 'bg-high/15',     border: 'border-high/25',     label: 'Reopened'         },
+  assigned:        { color: 'text-accent',   bg: 'bg-accent/15',   border: 'border-accent/25',   label: 'Assigned'         },
+  reassigned:      { color: 'text-accent',   bg: 'bg-accent/15',   border: 'border-accent/25',   label: 'Reassigned'       },
+  force_reassigned:{ color: 'text-critical', bg: 'bg-critical/15', border: 'border-critical/25', label: 'Force Reassigned' },
+  note_added:      { color: 'text-info',     bg: 'bg-info/15',     border: 'border-info/25',     label: 'Note Added'       },
+  note_updated:    { color: 'text-info',     bg: 'bg-info/15',     border: 'border-info/25',     label: 'Note Updated'     },
+}
+
+function AuditTrail({ eventId, refreshKey }) {
+  const [logs,     setLogs]     = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState('')
+  const [showAll,  setShowAll]  = useState(false)
+  const PREVIEW = 2
+
+  useEffect(() => {
+    if (!eventId) return
+    setLoading(true)
+    setShowAll(false)
+    api.get(`/events/${eventId}/audit`)
+      .then(r => {
+        const sorted = [...r.data].sort((a, b) =>
+          new Date(a.timestamp + 'Z') - new Date(b.timestamp + 'Z')
+        )
+        setLogs(sorted)
+      })
+      .catch(() => setError('Failed to load audit trail'))
+      .finally(() => setLoading(false))
+  }, [eventId, refreshKey])
+
+  const visible  = showAll ? logs : logs.slice(-PREVIEW)
+  const hiddenCount = logs.length - PREVIEW
+
+  const renderEntry = (log, i, arr) => {
+    const cfg = ACTION_CONFIG[log.action] ?? {
+      color: 'text-dim', bg: 'bg-muted/40', border: 'border-border', label: log.action
+    }
+    const isLast = i === arr.length - 1
+    return (
+      <div key={log.id} className="flex items-start gap-3">
+        {/* Dot */}
+        <div className={`w-5 h-5 rounded-full border flex items-center justify-center
+                         shrink-0 z-10 mt-0.5 ${cfg.bg} ${cfg.border}`}>
+          <div className={`w-1.5 h-1.5 rounded-full ${cfg.color.replace('text-','bg-')}`} />
+        </div>
+        {/* Content */}
+        <div className={`flex-1 min-w-0 pb-2.5 ${!isLast ? 'border-b border-border/30' : ''}`}>
+          <div className="flex items-center justify-between gap-2 mb-0.5">
+            <span className={`text-xs font-semibold font-mono ${cfg.color}`}>
+              {cfg.label}
+            </span>
+            <span className="text-xs text-dim font-mono whitespace-nowrap">
+              {formatTime(log.timestamp)}
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-subtle font-mono">by</span>
+            <span className="text-xs text-text/80 font-medium">{log.performed_by}</span>
+          </div>
+          {log.details && (
+            <p className="text-[11px] text-dim mt-0.5 font-mono leading-relaxed">
+              {log.details}
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs text-subtle font-mono uppercase tracking-widest
+                      flex items-center gap-1.5">
+          <History size={11} />
+          Audit Trail
+          {logs.length > 0 && (
+            <span className="text-subtle/60 normal-case">({logs.length})</span>
+          )}
+        </p>
+        {!loading && logs.length > PREVIEW && (
+          <button
+            onClick={e => { e.stopPropagation(); setShowAll(v => !v) }}
+            className="text-[11px] font-mono text-accent/70 hover:text-accent
+                       flex items-center gap-1 transition-colors"
+          >
+            {showAll ? (
+              <><ChevronUp size={11} /> Show less</>
+            ) : (
+              <><ChevronDown size={11} /> +{hiddenCount} more</>
+            )}
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="space-y-2">
+          {[1,2].map(i => (
+            <div key={i} className="h-10 bg-muted/40 rounded-lg animate-pulse" />
+          ))}
+        </div>
+      ) : error ? (
+        <p className="text-xs text-critical font-mono">{error}</p>
+      ) : logs.length === 0 ? (
+        <p className="text-xs text-subtle font-mono italic">No audit history yet</p>
+      ) : (
+        <div className="relative">
+          <div className="absolute left-2.5 top-3 bottom-3 w-px bg-border/50" />
+          <div className="space-y-0">
+            {visible.map((log, i) => renderEntry(log, i, visible))}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -601,34 +723,12 @@ function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, c
                   </div>
                 </div>
               )}
-              <div>
-                <p className="text-xs text-subtle font-mono uppercase tracking-widest mb-1.5">Audit Trail</p>
-                <div className="space-y-1.5">
-                  <p className="text-xs font-mono text-dim flex items-center gap-1.5">
-                    <Clock size={11} className="text-subtle" />
-                    Detected: <span className="text-text">{formatTime(event.timestamp)}</span>
-                  </p>
-                  {event.investigated_by && (
-                    <p className="text-xs font-mono text-dim flex items-center gap-1.5">
-                      <Clock size={11} className="text-medium" />
-                      Investigating: <span className="text-medium font-medium">{event.investigated_by}</span>
-                    </p>
-                  )}
-                  {event.resolved_at && (
-                    <p className="text-xs font-mono text-dim flex items-center gap-1.5">
-                      <Clock size={11} className="text-low" />
-                      Resolved: <span className="text-low">{formatTime(event.resolved_at)}</span>
-                      {event.resolved_by && <span className="text-low font-medium">by {event.resolved_by}</span>}
-                    </p>
-                  )}
-                  {event.reopened_at && (
-                    <p className="text-xs font-mono text-dim flex items-center gap-1.5">
-                      <Clock size={11} className="text-medium" />
-                      Reopened: <span className="text-medium">{formatTime(event.reopened_at)}</span>
-                      {event.assigned_to && <span className="text-medium font-medium">→ {event.assigned_to}</span>}
-                    </p>
-                  )}
-                </div>
+              {/* Audit Trail — fetched from event_audit_logs table */}
+              <div className="md:col-span-2">
+                <AuditTrail
+                  eventId={event.id}
+                  refreshKey={`${event.status}-${event.notes}-${event.assigned_to}-${event.resolved_by}`}
+                />
               </div>
               {/* Notes */}
               <div className="md:col-span-2">
@@ -660,7 +760,7 @@ function EventRow({ event, selected, onSelect, onStatusChange, isNew, compact, c
 }
 
 // ── GroupCard ─────────────────────────────────────────────────────────────────
-function GroupCard({ groupKey, events, groupByFields, selected, onSelect, onStatusChange, newEventIds, isAdmin, onAssign, onReopen }) {
+function GroupCard({ groupKey, events, groupByFields, selected, onSelect, onStatusChange, newEventIds, isAdmin, onAssign, onReopen, currentUser }) {
   const [expanded,    setExpanded]    = useState(false)
   const [bulkStatus,  setBulkStatus]  = useState('')
   const [bulkLoading, setBulkLoading] = useState(false)
@@ -1385,6 +1485,7 @@ export default function Events() {
                 isAdmin={isAdmin}
                 onAssign={handleAssign}
                 onReopen={handleReopen}
+                currentUser={currentUser}
               />
             ))}
           </div>

@@ -48,8 +48,8 @@ class SuspiciousEvent(db.Model):
     investigated_by  = db.Column(db.String(100), nullable=True)
     resolved_by      = db.Column(db.String(100), nullable=True)
     notes            = db.Column(db.Text,         nullable=True)
-    assigned_to      = db.Column(db.String(100), nullable=True)  # set on reopen by admin
-    reopened_at      = db.Column(db.DateTime,    nullable=True)  # when event was reopened
+    assigned_to      = db.Column(db.String(100), nullable=True)
+    reopened_at      = db.Column(db.DateTime,    nullable=True)
 
     def to_dict(self):
         return {
@@ -72,4 +72,31 @@ class SuspiciousEvent(db.Model):
             "notes":           self.notes,
             "assigned_to":     self.assigned_to,
             "reopened_at":     self.reopened_at.isoformat() if self.reopened_at else None,
+        }
+
+
+class EventAuditLog(db.Model):
+    """
+    Immutable append-only log of every action taken on a SuspiciousEvent.
+    Never updated or deleted — only inserted.
+    """
+    __tablename__ = "event_audit_logs"
+
+    id           = db.Column(db.Integer,     primary_key=True)
+    event_id     = db.Column(db.Integer,     db.ForeignKey("suspicious_events.id"), nullable=False)
+    timestamp    = db.Column(db.DateTime,    default=datetime.utcnow, nullable=False)
+    action       = db.Column(db.String(50),  nullable=False)   # created, investigating, resolved,
+                                                                # reopened, assigned, reassigned,
+                                                                # note_added, note_updated, force_reassigned
+    performed_by = db.Column(db.String(100), nullable=False)   # username
+    details      = db.Column(db.Text,        nullable=True)    # free-form context string
+
+    def to_dict(self):
+        return {
+            "id":           self.id,
+            "event_id":     self.event_id,
+            "timestamp":    self.timestamp.isoformat(),
+            "action":       self.action,
+            "performed_by": self.performed_by,
+            "details":      self.details,
         }

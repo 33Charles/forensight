@@ -5,4 +5,6 @@ db = SQLAlchemy()
 def init_db(app):
     db.init_app(app)
     with app.app_context():
+        from models.log_entry import LogEntry, SuspiciousEvent, EventAuditLog
+        from models.user import User
         db.create_all()

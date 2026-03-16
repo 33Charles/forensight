@@ -118,7 +118,7 @@ class LogReceiver:
         return entry
 
     def _save_suspicious_event(self, event: dict, log_id: int, source: str = "live"):
-        from models.log_entry import SuspiciousEvent
+        from models.log_entry import SuspiciousEvent, EventAuditLog
         se = SuspiciousEvent(
             timestamp       = event["timestamp"],
             event_type      = event["event_type"],
@@ -134,8 +134,18 @@ class LogReceiver:
             mitre_tactic    = event.get("mitre_tactic"),
         )
         self.db.session.add(se)
+        self.db.session.flush()  # get se.id before commit
+
+        # Audit log — created entry
+        audit = EventAuditLog(
+            event_id     = se.id,
+            action       = "created",
+            performed_by = "system",
+            details      = f"Auto-detected: {event['event_type']} ({event['severity']})",
+        )
+        self.db.session.add(audit)
         self.db.session.commit()
-        return se 
+        return se
 
 
 def _suspicious_to_dict(event: dict) -> dict:

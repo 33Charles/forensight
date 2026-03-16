@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models.log_entry import LogEntry, SuspiciousEvent
+from models.log_entry import LogEntry, SuspiciousEvent, EventAuditLog
 from models.user import User
 from database.db import db
 from datetime import datetime, timedelta
@@ -14,6 +14,18 @@ def _is_admin(username):
     """Check if a username belongs to an admin user."""
     user = User.query.filter_by(username=username, is_active=True).first()
     return user and user.role == "admin"
+
+
+def _audit(event_id, action, performed_by, details=None):
+    """Append an immutable audit log entry."""
+    log = EventAuditLog(
+        event_id     = event_id,
+        action       = action,
+        performed_by = performed_by,
+        details      = details,
+    )
+    db.session.add(log)
+    # No commit here — caller commits after all changes
 
 
 # ── Log Entries ────────────────────────────────────────────────────────────────
@@ -84,57 +96,58 @@ def update_event_status(event_id):
         return jsonify({"error": "Invalid status"}), 400
 
     # ── Ownership enforcement ──────────────────────────────────────────────
-
-    # open + assigned — only assignee or admin can take action
     if event.status == "open" and event.assigned_to:
         if event.assigned_to != current_user and not admin:
             return jsonify({
                 "error": f"This event is assigned to '{event.assigned_to}'"
             }), 403
 
-    # investigating — only investigator can change status
-    # admin can reassign via /assign endpoint but cannot skip to resolved
     if event.status == "investigating" and event.investigated_by:
         if event.investigated_by != current_user:
             if admin and status == "resolved":
-                # Admin cannot resolve on behalf of investigator —
-                # they must reassign first
                 return jsonify({
-                    "error": f"Cannot resolve on behalf of '{event.investigated_by}' — reassign the event first"
+                    "error": f"Cannot resolve on behalf of '{event.investigated_by}' — reassign first"
                 }), 403
             elif not admin:
                 return jsonify({
                     "error": f"Being investigated by '{event.investigated_by}'"
                 }), 403
 
-    # resolved — only resolver OR admin can reopen
     if event.status == "resolved" and event.resolved_by:
         if event.resolved_by != current_user and not admin:
             return jsonify({
                 "error": "Resolved events can only be reopened by the resolver or an admin"
             }), 403
 
-    # ── Apply status change ────────────────────────────────────────────────
+    # ── Apply status + audit ───────────────────────────────────────────────
+    prev_status = event.status
     event.status = status
 
     if status == "investigating":
         event.investigated_by = current_user
         event.resolved_at     = None
         event.resolved_by     = None
-        event.assigned_to     = None  # clear assignment — now being handled
+        event.assigned_to     = None
+        _audit(event_id, "investigating", current_user,
+               f"Started investigation (was: {prev_status})")
 
     elif status == "resolved":
         event.resolved_by = current_user
         event.resolved_at = datetime.utcnow()
+        _audit(event_id, "resolved", current_user, "Event resolved")
 
     elif status == "open":
-        # Reopening — clear all tracking, assignment handled separately
+        # Capture who had it before clearing — preserve in audit details
+        prev_actor = event.resolved_by or event.investigated_by
+        detail     = f"Reopened from '{prev_status}'"
+        if prev_actor:
+            detail += f" (previously handled by '{prev_actor}')"
+        _audit(event_id, "reopened", current_user, detail)
         event.investigated_by = None
         event.resolved_by     = None
         event.resolved_at     = None
         event.notes           = None
         event.reopened_at     = datetime.utcnow()
-        # assigned_to set via assign endpoint, not here
 
     db.session.commit()
     return jsonify(event.to_dict())
@@ -143,14 +156,6 @@ def update_event_status(event_id):
 @api.route("/events/<int:event_id>/assign", methods=["PATCH"])
 @jwt_required_with_role("manage_users")
 def assign_event(event_id):
-    """
-    Assign or reassign an event to a user. Admin only.
-    Works on open and investigating events.
-    Reassigning an investigating event resets it to open so the
-    new assignee starts fresh — full audit trail preserved.
-    Body: { "assigned_to": "username" | null }
-    null = unassign
-    """
     event = db.session.get(SuspiciousEvent, event_id)
     if not event:
         return jsonify({"error": "Event not found"}), 404
@@ -160,19 +165,28 @@ def assign_event(event_id):
 
     data        = request.get_json()
     assigned_to = data.get("assigned_to")
+    current_user = get_jwt_identity()
 
-    # Validate assignee exists and is active
     if assigned_to:
         assignee = User.query.filter_by(username=assigned_to, is_active=True).first()
         if not assignee:
             return jsonify({"error": f"User '{assigned_to}' not found or inactive"}), 404
 
-    # If reassigning an investigating event — reset to open so new assignee
-    # starts fresh. Notes are preserved for continuity.
+    # Force reassigning an investigating event — reset to open
     if event.status == "investigating":
+        prev_investigator     = event.investigated_by
         event.status          = "open"
         event.investigated_by = None
         event.reopened_at     = datetime.utcnow()
+        _audit(event_id, "force_reassigned", current_user,
+               f"Force reassigned from '{prev_investigator}' → '{assigned_to or 'unassigned'}'")
+    else:
+        prev = event.assigned_to
+        action  = "reassigned" if prev else "assigned"
+        details = f"Assigned to '{assigned_to}'" if assigned_to else "Assignment removed"
+        if prev and assigned_to:
+            details = f"Reassigned from '{prev}' → '{assigned_to}'"
+        _audit(event_id, action, current_user, details)
 
     event.assigned_to = assigned_to
     db.session.commit()
@@ -206,9 +220,34 @@ def update_event_notes(event_id):
 
     data        = request.get_json()
     notes       = data.get("notes", "")
+    had_notes   = bool(event.notes)
     event.notes = notes.strip() if notes else None
+
+    action  = "note_updated" if had_notes else "note_added"
+    preview = (notes or "")[:80] + ("..." if len(notes or "") > 80 else "")
+    _audit(event_id, action, current_user,
+           f"Note {'updated' if had_notes else 'added'}: \"{preview}\"" if preview else "Note cleared")
+
     db.session.commit()
     return jsonify(event.to_dict())
+
+
+# ── Audit Log ──────────────────────────────────────────────────────────────────
+
+@api.route("/events/<int:event_id>/audit", methods=["GET"])
+@jwt_required_with_role("view")
+def get_event_audit(event_id):
+    """Return the full audit trail for a specific event."""
+    event = db.session.get(SuspiciousEvent, event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+
+    logs = EventAuditLog.query\
+        .filter_by(event_id=event_id)\
+        .order_by(EventAuditLog.timestamp.asc())\
+        .all()
+
+    return jsonify([l.to_dict() for l in logs])
 
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
@@ -388,6 +427,9 @@ def ingest_logs():
                         mitre_tactic    = suspicious.get("mitre_tactic"),
                     )
                     db.session.add(se)
+                    db.session.flush()
+                    _audit(se.id, "created", "system",
+                           f"Auto-detected: {suspicious['event_type']} ({suspicious['severity']})")
                     alerts += 1
             except Exception:
                 errors += 1
