@@ -6,7 +6,7 @@ Forensight is a lightweight, Linux-focused security monitoring and threat detect
 
 Built with Python, Flask, React, and SQLite, Forensight collects forwarded logs from Linux hosts, analyzes events against configurable detection rules, and presents potential security threats with severity classifications, investigation workflows, and MITRE ATT&CK context.
 
-> **Project status:** Security monitoring and investigation prototype developed and tested in a lab environment. It is intended for learning, experimentation, and demonstration—not as a replacement for a production-grade SIEM.
+> **Project status:** Security monitoring and investigation prototype developed and tested in a lab environment. It is intended for learning, experimentation, and demonstration, not as a replacement for a production-grade SIEM.
 
 ## Table of Contents
 
@@ -134,7 +134,6 @@ flowchart TD
     J --> K
 ```
 
-*Conceptual architecture; exact runtime sequencing and event delivery depend on the implemented processing paths.*
 
 ### Event Processing
 
@@ -185,17 +184,18 @@ Actual alert behavior depends on rule enablement, parser output, available telem
 
 ## Investigation Workflow
 
-Forensight provides a basic investigation lifecycle for suspicious events.
+Forensight provides a structured investigation lifecycle for suspicious events.
 
 1. **Detection:** A matching rule generates a suspicious event with severity, descriptive context, and available source details.
-2. **Review:** An authorized user examines the event and its associated log record.
-3. **Assignment:** An authorized administrator assigns the event to an active user.
-4. **Investigation:** The assigned analyst changes the event status and records investigation notes.
-5. **Resolution:** An authorized user resolves the event and records the resolution actor and timestamp.
-6. **Audit review:** The event's audit trail can be inspected to review recorded actions.
-7. **Reopening:** A resolved event can be reopened according to the application's ownership and administrative rules.
+2. **Review:** An authorized user examines the alert and its associated log records.
+3. **Assignment:** An analyst can assign an unassigned alert to themselves. Administrators can assign alerts to active users, reassign existing alerts, and change ownership when necessary.
+4. **Investigation:** The assigned analyst moves the alert into the investigating state and documents findings through investigation notes.
+5. **Resolution:** The investigator resolves the alert, recording the resolution actor and timestamp.
+6. **Audit review:** Authorized users can inspect the event's audit trail to review recorded actions, timestamps, and responsible users.
+7. **Reopening and reassignment:** Resolved alerts can be reopened by authorized users under the application's ownership rules. Administrators can also force-reassign an alert under investigation, returning it to the open state before changing its assignment.
 
-The database stores event status, investigator, resolver, assignee, notes, and reopening metadata. Event audit records are intended to preserve a chronological history of investigative actions.
+The workflow uses role-based permissions and ownership checks to help maintain accountability throughout the investigation process.
+
 
 ## Technology Stack
 
@@ -300,13 +300,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
-```
 
-Before installing, make sure `backend/requirements.txt` includes every imported dependency. In particular, the reviewed `app.py` imports `colorlog`, but it was absent from the supplied requirements file.
-
-Add the missing dependency to `requirements.txt` if that import remains in use, then install:
-
-```bash
 pip install -r requirements.txt
 ```
 
