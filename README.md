@@ -327,7 +327,9 @@ python app.py
 ```
 
 On first startup, if the database contains no users, the application prompts you to create the initial administrator account. The username must be at least three characters long and the password at least eight characters long.
+
 ![Initial Admin account setup](image.png)
+
 The application initializes its database and starts the TCP log receiver on the configured host and port, followed by the Flask-SocketIO application on port `5000`.
 
 ### 5. Install and build the frontend
