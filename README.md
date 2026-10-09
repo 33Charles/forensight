@@ -84,8 +84,6 @@ flowchart TD
     J --> I
 ```
 
-*Conceptual architecture; component boundaries and processing details should be confirmed against the final implementation.*
-
 ### Architecture Components
 
 | Component             | Responsibility                                                                        |
@@ -114,17 +112,67 @@ The precise parsing, normalization, deduplication, and rule-evaluation behavior 
 
 ## Detection Capabilities
 
-Forensight focuses on identifying suspicious behavior through Linux telemetry and network-related events.
+Forensight uses configurable, YAML-defined detection rules to identify suspicious authentication activity, privilege escalation indicators, sensitive file access, network reconnaissance, and potentially malicious network behavior.
 
-| Detection area         | Description                                                                                              |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- |
-| Brute-force activity   | Identify patterns consistent with repeated authentication failures.                                      |
-| Port scanning          | Detect network activity indicative of service or port enumeration.                                       |
-| Reverse-shell activity | Identify event patterns associated with potential reverse-shell execution or connections.                |
-| Privilege escalation   | Identify activity that may indicate attempts to obtain elevated privileges.                              |
-| Sensitive file access  | Monitor configured security-sensitive paths, including `/etc/passwd`, `/etc/shadow`, and `/etc/sudoers`. |
+Rules can be enabled or disabled, and supported thresholds, time windows, severity levels, and other detection parameters can be adjusted without modifying the application code. The application supports reloading rule configuration through `POST /api/rules/reload`.
 
-These capabilities rely on the availability and quality of the relevant telemetry. A detection indicates potentially suspicious activity; it does not automatically establish that a host has been compromised.
+### Detection Coverage
+
+| Detection Rule                  | Detection Logic                                                                                                                                               | Default Severity                        | MITRE ATT&CK                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------- |
+| SSH Brute Force                 | Detects repeated failed SSH authentication attempts from the same IP within a configurable time window.                                                       | Medium, High, Critical                  | T1110 — Brute Force                       |
+| Root Login Attempt              | Identifies SSH login attempts targeting the root account.                                                                                                     | High                                    | T1078 — Valid Accounts                    |
+| Sudo Brute Force                | Detects repeated sudo authentication failures within a configured time window.                                                                                | High                                    | T1548.003 — Sudo and Sudo Caching         |
+| Unauthorized Sudo               | Identifies sudo attempts by users not listed in the sudoers configuration.                                                                                    | Medium                                  | T1548.003 — Sudo and Sudo Caching         |
+| Privilege Escalation Indicators | Detects configured patterns involving root-shell spawning, sudoers modification, privileged-group membership changes, account creation, and password changes. | High or Critical, depending on the rule | T1548 — Abuse Elevation Control Mechanism |
+| Sensitive File Access           | Monitors access to configured sensitive paths, including `/etc/shadow`, `/etc/sudoers`, SSH configuration, authorized keys, and root directories.             | High                                    | T1003 — OS Credential Dumping             |
+| Unauthorized File Access        | Detects permission-denied file access attempts, excluding configured system paths.                                                                            | Medium                                  | T1083 — File and Directory Discovery      |
+| Port Scan Detection             | Detects outbound scanning using `auditd` connection events and inbound scanning using `iptables` SYN logging.                                                 | High                                    | T1046 — Network Service Discovery         |
+| Reverse Shell Detection         | Identifies configured shell or scripting processes making outbound network connections, with executable allowlisting.                                         | Critical                                | T1059 — Command and Scripting Interpreter |
+| C2 Beaconing Detection          | Identifies repeated outbound connections to the same external IP within a configurable time window, subject to configured allowlists.                         | Critical                                | T1071 — Application Layer Protocol        |
+
+*Severity represents the configured alert classification, not a definitive determination that malicious activity occurred.*
+
+### Configurable Thresholds
+
+The YAML configuration exposes several detection thresholds and time windows.
+
+| Rule                                   | Configuration                                 | Default                           |
+| -------------------------------------- | --------------------------------------------- | --------------------------------- |
+| SSH brute force                        | Failed attempts within the time window        | Medium: 5; High: 10; Critical: 20 |
+| Sudo brute force                       | Failed attempts within 60 seconds             | 3                                 |
+| Port scanning — outbound               | Unique ports within 10 seconds                | 15                                |
+| Port scanning — inbound                | Unique ports within 10 seconds                | 5                                 |
+| C2 beaconing                           | Connections to the same IP within 300 seconds | 10                                |
+| Unauthorized sudo deduplication        | Deduplication window                          | 10 seconds                        |
+| Sensitive file access deduplication    | Deduplication window                          | 10 seconds                        |
+| Unauthorized file access deduplication | Deduplication window                          | 30 seconds                        |
+
+Other rules use configured severities, command patterns, file paths, executable lists, and allowlists to determine which events should trigger alerts.
+
+### Port Scan Detection
+
+Forensight approaches port scan detection from two directions:
+
+* **Outbound scanning:** Uses `auditd` connection-related syscall events to identify a host or process connecting to multiple ports on other systems.
+* **Inbound scanning:** Uses `iptables` SYN logging to identify external hosts probing multiple ports on a monitored system.
+
+This distinction provides visibility into both potentially suspicious scanning originating from monitored hosts and reconnaissance directed at them.
+
+### Reverse Shell and Beaconing Detection
+
+The reverse-shell rule evaluates network activity associated with configured shell and scripting executables, including Bash, Python, Perl, Ruby, and common netcat variants. A configurable executable allowlist helps exclude known system processes from this rule.
+
+The C2 beaconing rule looks for repeated outbound connections to the same external IP over a five-minute window. Configured port and executable allowlists help reduce expected traffic being classified as suspicious.
+
+These are behavioral indicators rather than proof of compromise. Legitimate administrative scripts, monitoring services, and development tools can produce similar activity, so detection quality depends on the telemetry, rule implementation, and allowlist configuration.
+
+### MITRE ATT&CK Integration
+
+Detection rules include associated MITRE ATT&CK technique identifiers and tactic labels. This provides analysts with a consistent framework for interpreting suspicious activity and understanding its potential relationship to adversary behavior.
+
+The mapping is configured alongside the detection rule, allowing the application to present technique context with applicable alerts. ATT&CK associations describe the behavior a rule is intended to detect; they do not independently confirm that an adversary executed a technique successfully.
+
 
 ### Linux Audit and Network Telemetry
 
