@@ -420,6 +420,71 @@ A successful response includes counts for processed lines, saved entries, genera
 
 Historical detection results should be interpreted in context. Detection outcomes can depend on the supported log format, the order of records, and the detector's in-memory state.
 
+## Security Events & Investigation
+
+The Security Events page (`/events`) is the central investigation interface in Forensight. It brings together suspicious events generated from live Linux log monitoring and historical log analysis, providing a workspace for reviewing alerts, investigating activity, and managing the investigation lifecycle.
+
+![alt text](image-5.png)
+
+### Event Monitoring
+
+* **Severity and status tracking:** View events by severity (`Critical`, `High`, `Medium`, `Low`) and investigation status (`Open`, `Investigating`, `Resolved`).
+* **Advanced filtering:** Filter by event type, target host, source (`Live` or `Historical`), severity, status, and time range. Search events and select custom date ranges.
+* **Sorting and pagination:** Sort events by supported columns and navigate results in pages.
+* **Live updates:** Receive newly detected events through Socket.IO, with automatic polling available as a complementary refresh mechanism.
+* **Event aging:** See how long open events have remained unresolved.
+* **CSV export:** Export the currently filtered event set for further analysis.
+
+### List and Grouped Views
+
+Forensight supports two ways to explore security events:
+
+* **List view:** Review individual events in a sortable, paginated table.
+* **Grouped view:** Organize events by selected fields, such as event type, source IP, username, or target host. Groups display event counts, status breakdowns, and the highest severity within each group.
+
+Grouped view also supports expanding groups to inspect individual events and applying bulk status changes.
+
+### Event Investigation
+
+Expanding an event opens its investigation details, including:
+
+* Event description, severity, source information, and target host.
+* MITRE ATT&CK technique and tactic mappings, where available.
+* The original raw log record that triggered the detection.
+* Related events sharing the same source IP address or username.
+* Analyst notes and the event's audit history.
+* Status and assignment controls governed by user permissions.
+
+### Investigation Workflow
+
+Events follow a defined lifecycle:
+
+1. **Open:** A suspicious event is detected and awaits investigation.
+2. **Investigating:** An analyst takes responsibility for examining the event.
+3. **Resolved:** The investigation is marked complete, with the resolution recorded in the event history.
+
+Authorized users can assign events, while administrators have additional reassignment controls. Resolved events can be reopened by authorized users when further investigation is required.
+
+Analyst notes support recording investigative findings, and ownership restrictions help maintain accountability during an investigation.
+
+### Audit Trail and Accountability
+
+Forensight maintains an event audit history covering actions such as event creation, status changes, assignment, reassignment, and note updates. The interface presents these actions chronologically, making it easier to follow how an event was handled.
+
+### Related Events and Deep Linking
+
+* **Related-event investigation:** Pivot to other events associated with the same source IP or username.
+* **Shareable permalinks:** Copy a URL that opens a specific event's expanded details.
+* **Bulk actions:** Select multiple events or an entire group to apply status changes efficiently.
+
+Together, these capabilities make the Events page the primary workspace for moving from a detection to evidence review, investigation, and resolution.
+
+**Note:** Detection alerts identify activity that matches configured rules; they should be investigated in context rather than treated as definitive proof of compromise.
+
+
+![alt text](image-5.png)
+
+
 ## Security and Access Control
 
 ### Role-Based Permissions
