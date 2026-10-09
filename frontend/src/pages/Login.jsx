@@ -113,11 +113,11 @@ export default function Login() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-subtle mt-6 font-mono flex items-center
+        {/* <p className="text-center text-xs text-subtle mt-6 font-mono flex items-center
                       justify-center gap-1.5">
           <Terminal size={11} />
           SC212/0564/2022 · Charles Mwangi
-        </p>
+        </p> */}
       </div>
     </div>
   )
