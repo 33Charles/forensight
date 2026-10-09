@@ -398,18 +398,12 @@ The setup script's connectivity check verifies basic TCP reachability.
 
 ## Accessing the Dashboard
 
-Once the frontend and backend are configured and running, open the frontend URL supplied by your development server or deployment.
+Once the frontend and backend are configured and running, open the frontend URL supplied by your development server 
 
 Sign in with the initial administrator account created during first-run setup.
 
 ![dashboard](image-2.png)
-Depending on the deployment and frontend routing, the dashboard communicates with the backend through:
 
-* REST endpoints under `/api`.
-* JWT Bearer authentication for API requests.
-* Socket.IO events named `log_entry` and `suspicious_event` for real-time updates.
-
-Do not expose the development server directly to untrusted networks.
 
 ## Historical Log Analysis
 
@@ -417,17 +411,12 @@ Forensight supports uploading a log file through the authenticated `POST /api/in
 
 The backend processes supported non-empty lines, attempts to parse them, stores accepted records with a historical source label, and runs the detection engine against parsed entries.
 
+![ingest log file ui](image-3.png)
+
 A successful response includes counts for processed lines, saved entries, generated alerts, and line-level processing errors.
 
-Example request:
+![alt text](image-4.png)
 
-```bash
-curl -X POST http://localhost:5000/api/ingest \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -F "file=@sample.log"
-```
-
-Replace `YOUR_ACCESS_TOKEN` with a valid access token and `sample.log` with a test log file.
 
 Historical detection results should be interpreted in context. Detection outcomes can depend on the supported log format, the order of records, and the detector's in-memory state.
 
