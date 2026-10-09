@@ -21,11 +21,11 @@ Built with Python, Flask, React, and SQLite, Forensight collects forwarded logs 
 * [Installation](#installation)
 * [Configuring Linux Log Sources](#configuring-linux-log-sources)
 * [Accessing the Dashboard](#accessing-the-dashboard)
-* [Historical Log Analysis](#historical-log-analysis)
+* [Historical Log Analysis](#historical-log-analysis-1)
+* [Security Events & Investigation](#security-events--investigation)
 * [Security and Access Control](#security-and-access-control)
 * [Configuration](#configuration)
 * [Known Limitations](#known-limitations)
-* [Future Improvements](#future-improvements)
 * [Author](#author)
 
 ## Overview
