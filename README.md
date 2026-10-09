@@ -348,13 +348,11 @@ For frontend development, use:
 npm run dev
 ```
 
-The Axios client and Socket.IO hook use relative paths (`/api` and `/`). Configure the Vite development proxy or the appropriate deployment routing so these requests reach the backend. The exact proxy configuration should be verified in `vite.config.*`.
-
-A frontend build alone does not establish that production routing, authentication, and WebSocket forwarding are correctly configured.
+After running `npm run dev`, Vite starts the frontend development server and automatically proxies API requests and real-time Socket.IO connections to the Flask backend on port `5000`.
 
 ## Configuring Linux Log Sources
 
-Forensight includes a Bash setup script for configuring a supported Linux source to forward selected logs to the monitoring server.
+Forensight includes a Bash setup script, `forensight-setup.sh`,  for configuring a supported Linux source to forward selected logs to the monitoring server.
 
 ### 1. Configure the monitoring server address
 
@@ -384,11 +382,11 @@ The script can:
 
 ### 3. Run the script
 
-Use the actual filename in your repository. For example:
-
 ```bash
-sudo bash ./path/to/log-source-setup.sh
+sudo  ./forensight-setup.sh
 ```
+
+![Running forensight-setup.sh](image-1.png)
 
 Repeat the configuration on each Linux host you want to monitor.
 
