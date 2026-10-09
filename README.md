@@ -442,6 +442,8 @@ Forensight supports two ways to explore security events:
 * **List view:** Review individual events in a sortable, paginated table.
 * **Grouped view:** Organize events by selected fields, such as event type, source IP, username, or target host. Groups display event counts, status breakdowns, and the highest severity within each group.
 
+![Group View](image-6.png)
+
 Grouped view also supports expanding groups to inspect individual events and applying bulk status changes.
 
 ### Event Investigation
@@ -471,6 +473,8 @@ Analyst notes support recording investigative findings, and ownership restrictio
 
 Forensight maintains an event audit history covering actions such as event creation, status changes, assignment, reassignment, and note updates. The interface presents these actions chronologically, making it easier to follow how an event was handled.
 
+![alt text](image-7.png)
+
 ### Related Events and Deep Linking
 
 * **Related-event investigation:** Pivot to other events associated with the same source IP or username.
@@ -480,9 +484,6 @@ Forensight maintains an event audit history covering actions such as event creat
 Together, these capabilities make the Events page the primary workspace for moving from a detection to evidence review, investigation, and resolution.
 
 **Note:** Detection alerts identify activity that matches configured rules; they should be investigated in context rather than treated as definitive proof of compromise.
-
-
-![alt text](image-5.png)
 
 
 ## Security and Access Control
