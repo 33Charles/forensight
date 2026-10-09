@@ -394,7 +394,7 @@ Repeat the configuration on each Linux host you want to monitor.
 
 Check that the required services are running on the source and that the source can reach the monitoring server on TCP port `5140`.
 
-The setup script's connectivity check verifies basic TCP reachability; it does not prove that every log format is parsed correctly or that every detection rule generates the expected alert.
+The setup script's connectivity check verifies basic TCP reachability.
 
 ## Accessing the Dashboard
 
@@ -402,6 +402,7 @@ Once the frontend and backend are configured and running, open the frontend URL 
 
 Sign in with the initial administrator account created during first-run setup.
 
+![dashboard](image-2.png)
 Depending on the deployment and frontend routing, the dashboard communicates with the backend through:
 
 * REST endpoints under `/api`.
