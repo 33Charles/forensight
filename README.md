@@ -1,14 +1,12 @@
 # FORENSIGHT
 
-### Real-Time Log Analysis and Threat Detection System
+### Real-Time Linux Log Analysis and Threat Detection System
 
-**Forensight** is a Linux-focused security monitoring and threat detection system designed to centralize log collection, identify suspicious activity, and support security event investigation through a unified web dashboard.
+Forensight is a lightweight, Linux-focused security monitoring and threat detection system designed to centralize system logs, identify suspicious activity, and support security investigations through a real-time web dashboard.
 
-The project combines Linux audit and system logs, configurable detection rules, a Python-based backend, and a React dashboard to provide visibility into security-relevant activity across monitored hosts.
+Built with Python, Flask, React, and SQLite, Forensight collects forwarded logs from Linux hosts, analyzes events against configurable detection rules, and presents potential security threats with severity classifications, investigation workflows, and MITRE ATT&CK context.
 
-It was built as a practical security engineering project exploring log aggregation, detection engineering, event processing, and analyst investigation workflows.
-
----
+> **Project status:** Security monitoring and investigation prototype developed and tested in a lab environment. It is intended for learning, experimentation, and demonstration—not as a replacement for a production-grade SIEM.
 
 ## Table of Contents
 
@@ -18,317 +16,498 @@ It was built as a practical security engineering project exploring log aggregati
 * [Detection Capabilities](#detection-capabilities)
 * [Investigation Workflow](#investigation-workflow)
 * [Technology Stack](#technology-stack)
-* [Deployment Model](#deployment-model)
-* [Installation and Configuration](#installation-and-configuration)
-* [Security Considerations](#security-considerations)
-* [Limitations](#limitations)
+* [Project Structure](#project-structure)
+* [Requirements](#requirements)
+* [Installation](#installation)
+* [Configuring Linux Log Sources](#configuring-linux-log-sources)
+* [Accessing the Dashboard](#accessing-the-dashboard)
+* [Historical Log Analysis](#historical-log-analysis)
+* [Security and Access Control](#security-and-access-control)
+* [Configuration](#configuration)
+* [Known Limitations](#known-limitations)
 * [Future Improvements](#future-improvements)
 * [Author](#author)
 
----
-
 ## Overview
 
-Security monitoring depends on collecting relevant telemetry, identifying suspicious behavior, and providing enough context to investigate potential threats. When logs remain distributed across individual hosts, correlating events and maintaining visibility becomes more difficult.
+Modern Linux environments generate valuable security telemetry through authentication services, system logs, audit frameworks, and network activity. However, reviewing these logs individually can make it difficult to recognize suspicious patterns and investigate related events.
 
-Forensight addresses this challenge by providing a centralized workflow for collecting Linux logs, processing security events, evaluating detection rules, and presenting resulting events and alerts to analysts.
+Forensight addresses this problem by collecting logs from configured Linux sources, parsing supported log formats, applying detection rules, and presenting suspicious activity through a centralized interface.
 
-The system was developed and tested in a Linux-based lab environment using multiple Ubuntu hosts.
+The system combines real-time log ingestion with historical log analysis, enabling security practitioners to examine potential threats, investigate alerts, document findings, and track event status.
 
 ### Project Objectives
 
-* Centralize Linux log collection and provide visibility across monitored hosts.
-* Detect suspicious activity using configurable rules and security event analysis.
-* Present events and alerts through an interactive dashboard.
-* Support investigation, assignment, tracking, and resolution of alerts.
-* Automate aspects of log-forwarding setup and system configuration.
-* Associate relevant detections with MITRE ATT&CK techniques to support threat analysis.
+* Centralize log collection from multiple Linux hosts.
+* Detect suspicious authentication and system activity.
+* Identify potential privilege escalation and unauthorized file access.
+* Monitor audit-recorded outbound connections and firewall-logged inbound scanning activity.
+* Provide real-time updates through a web dashboard.
+* Support structured alert investigation and audit history.
+* Map detected events to relevant MITRE ATT&CK techniques and tactics for investigative context.
 
 ## Key Features
 
-* **Centralized log collection:** Receive forwarded logs from monitored Linux hosts through `rsyslog`.
-* **Security event detection:** Identify suspicious activity, including brute-force attempts, port scans, reverse-shell indicators, and privilege-escalation activity.
-* **Configurable detection rules:** Define detection logic using YAML-based rule definitions.
-* **Real-time dashboard updates:** Deliver event and alert updates to connected clients using Flask-SocketIO.
-* **Alert investigation:** Track investigations, manage assignments, reopen cases, and record resolution notes.
-* **Role-based access:** Support administrator, analyst, and viewer roles.
-* **MITRE ATT&CK mapping:** Associate applicable detections with relevant adversary techniques.
-* **Event and alert visualization:** Present security information through dashboard charts and severity summaries.
-* **Data export:** Export relevant records in CSV format.
-* **Deployment automation:** Use Bash scripts to automate aspects of the installation and configuration of log-forwarding components.
+### Centralized Log Collection
+
+* Receives forwarded log messages over TCP.
+* Integrates with `rsyslog` and Linux `auditd`.
+* Supports authentication, privilege-related, system, audit, and firewall log events covered by its parser.
+* Stores parsed log entries and their raw messages for later review.
+
+### Rule-Based Threat Detection
+
+* Detects repeated SSH authentication failures.
+* Identifies SSH attempts targeting the root account.
+* Flags suspicious sudo activity and potential privilege escalation.
+* Monitors access attempts involving sensitive system files.
+* Detects potential inbound and outbound port-scanning activity.
+* Identifies shell processes making suspicious outbound connections.
+* Uses configurable YAML rules for detection thresholds, severity, and MITRE ATT&CK context.
+
+### Real-Time Security Dashboard
+
+* Receives live log and suspicious-event updates through Socket.IO.
+* Displays events by severity, type, status, and host.
+* Provides security statistics and event timelines.
+* Highlights frequently observed source IP addresses and targeted usernames.
+* Supports viewing individual logs and related events.
+
+### Alert Investigation and Case Tracking
+
+* Assign events to active users.
+* Move alerts between open, investigating, and resolved states.
+* Record investigation notes.
+* Reassign alerts when investigation ownership needs to change.
+* Reopen previously resolved events.
+* Maintain an event audit trail containing actions, timestamps, users, and details.
+
+### Historical Log Analysis
+
+* Upload supported log files for analysis through the authenticated API.
+* Store imported records separately from live-ingested records using a source label.
+* Apply the detection logic to supported historical log entries.
+* Review the resulting events alongside live monitoring data.
+
+### User and Access Management
+
+* JWT-based authentication.
+* Bcrypt password hashing.
+* Admin, analyst, and viewer roles.
+* Administrative user creation, updating, disabling, and deletion.
+* Access and refresh tokens with configurable lifetimes.
+
+### Data Export
+
+* Export dashboard-provided tabular data as CSV files using a frontend utility.
 
 ## Architecture
 
-Forensight follows a centralized collection and analysis model. Monitored Linux hosts generate system, audit, and network-related events. Forwarded logs are received by the central application, processed by the backend, and made available through the dashboard.
-
-### High-Level Data Flow
+Forensight uses a centralized collection architecture. Configured Linux hosts forward logs to the monitoring server, where the backend parses and analyzes incoming messages before storing the resulting records.
 
 ```mermaid
 flowchart TD
-    A[Linux Host 1]
-    B[Linux Host 2]
-    C[Linux Host 3]
+    A["Linux Host 1"]
+    B["Linux Host 2"]
+    C["Linux Host N"]
+    D["rsyslog / auditd / iptables"]
+    E["TCP Log Receiver :5140"]
+    F["Log Parser"]
+    G["Detection Engine"]
+    H[("SQLite Database")]
+    I["Flask API"]
+    J["Flask-SocketIO"]
+    K["React Dashboard"]
 
-    A --> D[rsyslog Log Forwarding]
+    A --> D
     B --> D
     C --> D
-
-    D --> E[Central Log Receiver]
-    E --> F[Flask Backend]
-    F --> G[Event Processing and Detection]
-    G --> H[(SQLite Database)]
-    H --> I[React Dashboard]
-
-    G --> J[Alerts and Investigation Workflow]
-    J --> H
-    J --> I
+    D --> E
+    E --> F
+    F --> G
+    F --> H
+    G --> H
+    H --> I
+    G --> J
+    E --> J
+    I --> K
+    J --> K
 ```
 
-### Architecture Components
-
-| Component             | Responsibility                                                                        |
-| --------------------- | ------------------------------------------------------------------------------------- |
-| Monitored Linux hosts | Generate system and security-relevant events.                                         |
-| `rsyslog`             | Forward logs from monitored hosts to the central receiver.                            |
-| Central log receiver  | Accept incoming forwarded log messages. The configured TCP listener uses port `5140`. |
-| Flask backend         | Provide application services, process events, and expose the API.                     |
-| Detection logic       | Evaluate incoming events against applicable detection rules.                          |
-| SQLite                | Persist events, alerts, investigation records, and related metadata.                  |
-| React dashboard       | Present security information and provide the analyst interface.                       |
-| Bash automation       | Automate aspects of log-forwarding installation and configuration.                    |
+*Conceptual architecture; exact runtime sequencing and event delivery depend on the implemented processing paths.*
 
 ### Event Processing
 
-At a high level, the workflow is:
-
-1. Monitored Linux systems generate logs and audit events.
-2. `rsyslog` forwards configured log sources to the central receiver.
-3. The backend processes incoming messages and extracts relevant event information.
-4. Detection logic evaluates applicable events and produces alerts when configured conditions are satisfied.
-5. Events and related records are persisted in SQLite.
-6. The dashboard presents event and alert information for monitoring and investigation.
-
-The precise parsing, normalization, deduplication, and rule-evaluation behavior depends on the implemented pipeline and detection rules.
+1. Configured Linux systems forward supported log messages to the monitoring server.
+2. The TCP receiver accepts incoming connections and processes newline-delimited log messages.
+3. The parser extracts fields such as timestamps, hostnames, processes, usernames, and network details where supported.
+4. The detection engine evaluates parsed records against enabled rules and its tracking state.
+5. The backend stores log entries and, when a suspicious event is detected, records the event and its creation audit entry.
+6. The dashboard receives live `log_entry` and `suspicious_event` Socket.IO notifications.
+7. Analysts investigate events through the authenticated REST API and web interface.
 
 ## Detection Capabilities
 
-Forensight uses configurable, YAML-defined detection rules to identify suspicious authentication activity, privilege escalation indicators, sensitive file access, network reconnaissance, and potentially malicious network behavior.
+The detection engine evaluates patterns across supported Linux authentication, audit, system, and firewall logs.
 
-Rules can be enabled or disabled, and supported thresholds, time windows, severity levels, and other detection parameters can be adjusted without modifying the application code. The application supports reloading rule configuration through `POST /api/rules/reload`.
+| Detection                       | Description                                                                                                         | Example MITRE ATT&CK context                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| SSH brute-force activity        | Repeated failed SSH authentication attempts from the same source and username within a configured time window.      | T1110 — Brute Force                                                    |
+| Root login attempts             | SSH authentication attempts targeting the root account.                                                             | T1078 — Valid Accounts, depending on the activity and mapping          |
+| Brute-force success             | A successful SSH login following recent failed attempts for the same source and username.                           | T1110 — Brute Force                                                    |
+| Sudo authentication failures    | Repeated sudo authentication failures.                                                                              | T1548.003 — Sudo and Sudo Caching                                      |
+| Unauthorized sudo activity      | Attempts to use sudo when the user is not authorized by the sudoers configuration.                                  | T1548.003 — Sudo and Sudo Caching                                      |
+| Privilege escalation indicators | Potential root-shell spawning, sudoers modification, privileged-group changes, user creation, and password changes. | T1548 — Abuse Elevation Control Mechanism                              |
+| Sensitive file access           | Access involving configured sensitive paths such as `/etc/shadow`, `/etc/sudoers`, and SSH configuration files.     | Credential-access context; the exact technique depends on the activity |
+| Unauthorized file access        | Permission-denied file access attempts matching configured audit rules.                                             | T1083 — File and Directory Discovery, where applicable                 |
+| Port scanning                   | Multiple destination ports observed in outbound audit events or inbound firewall logs within a configured window.   | T1046 — Network Service Discovery                                      |
+| Potential reverse shell         | A shell or scripting process making a suspicious outbound connection.                                               | T1059 — Command and Scripting Interpreter, as contextual mapping       |
+| Repeated outbound connections   | Repeated connections to the same destination IP within a configured period.                                         | T1071 — Application Layer Protocol, where applicable                   |
 
-### Detection Coverage
+**Important:** These detections identify suspicious indicators, not definitive proof of compromise. MITRE ATT&CK mappings provide investigative context and should be validated against the underlying evidence.
 
-| Detection Rule                  | Detection Logic                                                                                                                                               | Default Severity                        | MITRE ATT&CK                              |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- | ----------------------------------------- |
-| SSH Brute Force                 | Detects repeated failed SSH authentication attempts from the same IP within a configurable time window.                                                       | Medium, High, Critical                  | T1110 — Brute Force                       |
-| Root Login Attempt              | Identifies SSH login attempts targeting the root account.                                                                                                     | High                                    | T1078 — Valid Accounts                    |
-| Sudo Brute Force                | Detects repeated sudo authentication failures within a configured time window.                                                                                | High                                    | T1548.003 — Sudo and Sudo Caching         |
-| Unauthorized Sudo               | Identifies sudo attempts by users not listed in the sudoers configuration.                                                                                    | Medium                                  | T1548.003 — Sudo and Sudo Caching         |
-| Privilege Escalation Indicators | Detects configured patterns involving root-shell spawning, sudoers modification, privileged-group membership changes, account creation, and password changes. | High or Critical, depending on the rule | T1548 — Abuse Elevation Control Mechanism |
-| Sensitive File Access           | Monitors access to configured sensitive paths, including `/etc/shadow`, `/etc/sudoers`, SSH configuration, authorized keys, and root directories.             | High                                    | T1003 — OS Credential Dumping             |
-| Unauthorized File Access        | Detects permission-denied file access attempts, excluding configured system paths.                                                                            | Medium                                  | T1083 — File and Directory Discovery      |
-| Port Scan Detection             | Detects outbound scanning using `auditd` connection events and inbound scanning using `iptables` SYN logging.                                                 | High                                    | T1046 — Network Service Discovery         |
-| Reverse Shell Detection         | Identifies configured shell or scripting processes making outbound network connections, with executable allowlisting.                                         | Critical                                | T1059 — Command and Scripting Interpreter |
-| C2 Beaconing Detection          | Identifies repeated outbound connections to the same external IP within a configurable time window, subject to configured allowlists.                         | Critical                                | T1071 — Application Layer Protocol        |
+### Default Detection Thresholds
 
-*Severity represents the configured alert classification, not a definitive determination that malicious activity occurred.*
+The supplied configuration includes the following default values. They can be adjusted in `backend/detection_rules.yaml`.
 
-### Configurable Thresholds
+| Rule                                   | Default threshold or window                                  |
+| -------------------------------------- | ------------------------------------------------------------ |
+| SSH brute-force detection              | 5 medium, 10 high, 20 critical failures within 60 seconds    |
+| Sudo authentication failures           | 3 failures within 60 seconds                                 |
+| Outbound port scanning                 | 15 unique destination ports within 10 seconds                |
+| Inbound port scanning                  | 5 unique destination ports within 10 seconds                 |
+| Repeated outbound connections          | 10 connections to the same destination IP within 300 seconds |
+| Sensitive file access deduplication    | 10 seconds                                                   |
+| Unauthorized sudo deduplication        | 10 seconds                                                   |
+| Unauthorized file access deduplication | 30 seconds                                                   |
 
-The YAML configuration exposes several detection thresholds and time windows.
-
-| Rule                                   | Configuration                                 | Default                           |
-| -------------------------------------- | --------------------------------------------- | --------------------------------- |
-| SSH brute force                        | Failed attempts within the time window        | Medium: 5; High: 10; Critical: 20 |
-| Sudo brute force                       | Failed attempts within 60 seconds             | 3                                 |
-| Port scanning — outbound               | Unique ports within 10 seconds                | 15                                |
-| Port scanning — inbound                | Unique ports within 10 seconds                | 5                                 |
-| C2 beaconing                           | Connections to the same IP within 300 seconds | 10                                |
-| Unauthorized sudo deduplication        | Deduplication window                          | 10 seconds                        |
-| Sensitive file access deduplication    | Deduplication window                          | 10 seconds                        |
-| Unauthorized file access deduplication | Deduplication window                          | 30 seconds                        |
-
-Other rules use configured severities, command patterns, file paths, executable lists, and allowlists to determine which events should trigger alerts.
-
-### Port Scan Detection
-
-Forensight approaches port scan detection from two directions:
-
-* **Outbound scanning:** Uses `auditd` connection-related syscall events to identify a host or process connecting to multiple ports on other systems.
-* **Inbound scanning:** Uses `iptables` SYN logging to identify external hosts probing multiple ports on a monitored system.
-
-This distinction provides visibility into both potentially suspicious scanning originating from monitored hosts and reconnaissance directed at them.
-
-### Reverse Shell and Beaconing Detection
-
-The reverse-shell rule evaluates network activity associated with configured shell and scripting executables, including Bash, Python, Perl, Ruby, and common netcat variants. A configurable executable allowlist helps exclude known system processes from this rule.
-
-The C2 beaconing rule looks for repeated outbound connections to the same external IP over a five-minute window. Configured port and executable allowlists help reduce expected traffic being classified as suspicious.
-
-These are behavioral indicators rather than proof of compromise. Legitimate administrative scripts, monitoring services, and development tools can produce similar activity, so detection quality depends on the telemetry, rule implementation, and allowlist configuration.
-
-### MITRE ATT&CK Integration
-
-Detection rules include associated MITRE ATT&CK technique identifiers and tactic labels. This provides analysts with a consistent framework for interpreting suspicious activity and understanding its potential relationship to adversary behavior.
-
-The mapping is configured alongside the detection rule, allowing the application to present technique context with applicable alerts. ATT&CK associations describe the behavior a rule is intended to detect; they do not independently confirm that an adversary executed a technique successfully.
-
-
-### Linux Audit and Network Telemetry
-
-Forensight incorporates Linux auditing and network-related event sources, including:
-
-* **`auditd`:** Provides host-level audit events for configured system calls and sensitive file activity.
-* **`rsyslog`:** Transports configured Linux log sources to the central receiver.
-* **`iptables`:** Supplies relevant network events through the configured logging rules, including events associated with the `PORTSCAN_IN:` prefix.
-
-Detection coverage depends on the host's logging configuration, enabled audit rules, network logging rules, and the detection logic applied by the application.
-
-### MITRE ATT&CK Mapping
-
-Forensight associates applicable detections with MITRE ATT&CK techniques to provide additional context for investigating suspicious activity.
-
-ATT&CK mapping helps analysts understand the behavior a detection may represent and relate individual events to broader adversary tactics. A mapping is contextual information, not independent proof that a particular technique was successfully executed.
+Actual alert behavior depends on rule enablement, parser output, available telemetry, deduplication, and the detector's tracking logic.
 
 ## Investigation Workflow
 
-Beyond displaying alerts, Forensight includes functionality to support the management of security investigations.
+Forensight provides a basic investigation lifecycle for suspicious events.
 
-### Alert Management
+1. **Detection:** A matching rule generates a suspicious event with severity, descriptive context, and available source details.
+2. **Review:** An authorized user examines the event and its associated log record.
+3. **Assignment:** An authorized administrator assigns the event to an active user.
+4. **Investigation:** The assigned analyst changes the event status and records investigation notes.
+5. **Resolution:** An authorized user resolves the event and records the resolution actor and timestamp.
+6. **Audit review:** The event's audit trail can be inspected to review recorded actions.
+7. **Reopening:** A resolved event can be reopened according to the application's ownership and administrative rules.
 
-The application supports:
-
-* Assigning and reassigning investigations.
-* Reopening previously resolved investigations.
-* Recording resolution notes.
-* Maintaining investigation-related records and history.
-* Reviewing alerts by severity and other available dashboard information.
-* Exporting relevant records for further analysis.
-
-These features are intended to make it easier to move from identifying a suspicious event to documenting and tracking its investigation.
-
-### Access Control
-
-Forensight implements three application roles:
-
-| Role          | Purpose                                                       |
-| ------------- | ------------------------------------------------------------- |
-| Administrator | Administrative access to supported application functionality. |
-| Analyst       | Access to supported monitoring and investigation workflows.   |
-| Viewer        | Read-oriented access to supported application information.    |
-
-The precise permissions assigned to each role are defined by the application's authorization logic.
+The database stores event status, investigator, resolver, assignee, notes, and reopening metadata. Event audit records are intended to preserve a chronological history of investigative actions.
 
 ## Technology Stack
 
-| Component          | Purpose                                                                         |
-| ------------------ | ------------------------------------------------------------------------------- |
-| Python             | Core application logic, event processing, detection workflows, and automation.  |
-| Flask              | REST API and core backend application services.                                 |
-| Flask-SQLAlchemy   | ORM-based database models and persistence layer.                                |
-| Flask-JWT-Extended | JWT-based authentication and authorization.                                     |
-| Flask-SocketIO     | Real-time event and alert delivery to connected dashboard clients.              |
-| SQLite             | Persistent storage for events, alerts, investigations, and associated metadata. |
-| React              | Interactive analyst dashboard and user interface.                               |
-| Bash               | Automation of log-forwarding setup and system configuration.                    |
-| `rsyslog`          | Centralized forwarding of Linux system and application logs.                    |
-| `auditd`           | Host-level auditing and collection of security-relevant system events.          |
-| `iptables`         | Generation of relevant network security events.                                 |
-| YAML               | Declarative configuration of detection rules and associated conditions.         |
+### Backend
 
-## Deployment Model
+* **Python** — application logic and log processing.
+* **Flask** — REST API and application framework.
+* **Flask-SQLAlchemy / SQLAlchemy** — database access and ORM.
+* **Flask-SocketIO** — real-time event delivery.
+* **Flask-JWT-Extended** — access and refresh token authentication.
+* **bcrypt** — password hashing.
+* **PyYAML** — detection-rule configuration.
+* **SQLite** — local database storage.
+* **Python sockets and threading** — TCP log reception and concurrent client handling.
 
-Forensight was designed around a small, centralized Linux monitoring environment.
+### Frontend
 
-The lab architecture uses multiple Ubuntu hosts to generate telemetry and a central system to receive, process, store, and display events.
+* **React** — user interface.
+* **Vite** — development server and build tooling.
+* **React Router** — client-side routing.
+* **Tailwind CSS** — interface styling.
+* **Recharts** — charts and analytics.
+* **Axios** — REST API requests.
+* **Socket.IO Client** — real-time event updates.
+* **Lucide React** — interface icons.
 
-The central application combines the backend, database, and dashboard components. Monitored hosts require appropriate log-forwarding configuration and the relevant event sources for the detections being evaluated.
+### Linux Log Sources
 
-Bash automation supports aspects of the setup process, reducing the need to configure every log-forwarding component entirely by hand.
+* `rsyslog` — log forwarding.
+* `auditd` — audit telemetry and syscall-related events.
+* `iptables` — firewall logging for configured inbound scanning indicators.
+* Bash — log-source configuration automation.
 
-## Installation and Configuration
+## Project Structure
 
-> **Status:** The exact installation commands, script names, and environment variables need to be confirmed against the current repository.
+The following is a simplified overview of the project's main components.
 
-### Prerequisites
+```text
+forensight/
+├── backend/
+│   ├── app.py
+│   ├── config.py
+│   ├── requirements.txt
+│   ├── detection_rules.yaml
+│   ├── api/
+│   │   ├── routes.py
+│   │   ├── auth_routes.py
+│   │   └── user_routes.py
+│   ├── database/
+│   │   └── db.py
+│   ├── models/
+│   │   ├── log_entry.py
+│   │   └── user.py
+│   └── services/
+│       ├── auth.py
+│       ├── config_loader.py
+│       ├── detector.py
+│       ├── log_parser.py
+│       └── log_receiver.py
+├── frontend/
+│   ├── package.json
+│   └── src/
+│       ├── hooks/
+│       │   └── useSocket.js
+│       └── utils/
+│           ├── api.js
+│           ├── export.js
+│           └── helpers.js
+└── ...
+```
 
-The expected environment includes:
+*This tree highlights the files reviewed during documentation; it is not intended to list every file in the repository.*
 
-* A supported Linux environment for the backend and log receiver.
-* Python and the project's backend dependencies.
-* Node.js and npm for the React frontend.
-* SQLite for application data persistence.
-* `rsyslog` on systems that forward logs.
-* `auditd` and appropriate network logging configuration for the relevant detection sources.
-* Network connectivity between monitored hosts and the central receiver.
+## Requirements
 
-### Setup Overview
+* A Linux development or monitoring system.
+* Python 3 with virtual environment support.
+* Node.js and npm.
+* Network connectivity between configured log sources and the monitoring server.
+* TCP port `5140` reachable from log sources.
+* TCP port `5000` available for the Flask-SocketIO application.
+* `rsyslog`, `auditd`, and `iptables` on source hosts, as required by the setup script.
+* Sufficient permissions to configure logging, audit rules, and firewall logging on source hosts.
 
-The deployment process is expected to follow these stages:
+The supplied source-setup script targets Debian/Ubuntu-style systems using `apt-get` and systemd. Other distributions may require changes.
 
-1. Clone the repository.
-2. Configure the Python backend environment and install its dependencies.
-3. Configure the frontend dependencies.
-4. Set the required environment variables and application configuration.
-5. Initialize the application database using the project's supported initialization procedure.
-6. Configure log-forwarding and relevant telemetry on monitored Linux hosts.
-7. Configure the central receiver and ensure that its listening port is reachable from authorized hosts.
-8. Start the backend and frontend using the project's documented development or deployment commands.
-9. Generate test events and verify that they are received, processed, and displayed as expected.
+## Installation
 
-**Before running the application**, consult the repository's actual configuration and scripts. Commands, service names, credentials, and database initialization steps should be documented only after they have been verified.
+### 1. Clone the repository
 
-## Security Considerations
+```bash
+git clone https://github.com/33Charles/forensight.git
+cd forensight
+```
 
-Forensight is a security monitoring project, and its deployment should follow basic security practices.
+### 2. Configure the backend dependencies
 
-* Restrict access to the log receiver to authorized hosts and networks.
-* Use secure configuration for JWT signing keys, application secrets, and credentials.
-* Avoid committing `.env` files, private keys, tokens, or sensitive log data to source control.
-* Apply appropriate permissions to log files, configuration files, and the SQLite database.
-* Protect the dashboard and backend with suitable network controls.
-* Use synthetic events or an authorized lab environment when testing detection behavior.
-* Validate detection rules against benign and suspicious test cases to understand false positives and coverage gaps.
+```bash
+cd backend
 
-The implementation should not be assumed to provide production-grade security solely because it includes authentication, authorization, or detection features. Deployment security depends on the configuration, code, and operating environment.
+python3 -m venv .venv
+source .venv/bin/activate
 
-## Limitations
+python -m pip install --upgrade pip
+```
 
-Forensight is a practical project developed in a controlled Linux lab environment. Its current scope and effectiveness depend on the event sources, detection rules, and deployment configuration.
+Before installing, make sure `backend/requirements.txt` includes every imported dependency. In particular, the reviewed `app.py` imports `colorlog`, but it was absent from the supplied requirements file.
 
-Potential limitations to consider include:
+Add the missing dependency to `requirements.txt` if that import remains in use, then install:
 
-* Detection quality depends on the telemetry available from monitored hosts.
-* Rule-based detections can produce false positives and may miss activity that does not match configured conditions.
-* Coverage is limited to the event sources and behaviors explicitly supported by the implementation.
-* SQLite and a small centralized deployment may require architectural changes as event volume and concurrent usage increase.
-* Detection effectiveness must be validated through repeatable tests rather than inferred from the presence of a rule.
+```bash
+pip install -r requirements.txt
+```
 
-These limitations should be refined as the implementation and testing results are documented.
+### 3. Configure application secrets
+
+The application currently has a development fallback for `SECRET_KEY`. Set a strong, unique secret before running it outside a disposable lab environment.
+
+For example:
+
+```bash
+export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+```
+
+`JWT_SECRET_KEY` defaults to `SECRET_KEY` if it is not set separately. If you choose separate secrets, configure both appropriately.
+
+Do not commit real secrets to version control.
+
+### 4. Start the backend
+
+From the `backend/` directory, with the virtual environment activated:
+
+```bash
+python app.py
+```
+
+On first startup, if the database contains no users, the application prompts you to create the initial administrator account. The username must be at least three characters long and the password at least eight characters long.
+
+The application initializes its database and starts the TCP log receiver on the configured host and port, followed by the Flask-SocketIO application on port `5000`.
+
+### 5. Install and build the frontend
+
+Open another terminal:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+For frontend development, use:
+
+```bash
+npm run dev
+```
+
+The Axios client and Socket.IO hook use relative paths (`/api` and `/`). Configure the Vite development proxy or the appropriate deployment routing so these requests reach the backend. The exact proxy configuration should be verified in `vite.config.*`.
+
+A frontend build alone does not establish that production routing, authentication, and WebSocket forwarding are correctly configured.
+
+## Configuring Linux Log Sources
+
+Forensight includes a Bash setup script for configuring a supported Linux source to forward selected logs to the monitoring server.
+
+### 1. Configure the monitoring server address
+
+Before executing the script, edit the server address variable:
+
+```bash
+FORENSIGHT_SERVER="10.86.160.1"
+FORENSIGHT_PORT="5140"
+```
+
+Replace the example address with the actual reachable IP address of your Forensight server.
+
+Ensure that the monitoring host allows inbound TCP traffic on port `5140` from authorized source hosts.
+
+### 2. Review the setup script
+
+The script can:
+
+* Install `rsyslog` and `auditd` when required.
+* Configure forwarding of selected authentication, sudo, audit-dispatcher, system, and firewall messages.
+* Enable supported audit log forwarding.
+* Configure audit rules for sensitive files, account-management binaries, permission-denied file access, and outbound connection syscalls.
+* Configure rate-limited firewall log rules for selected inbound TCP SYN and UDP traffic.
+* Validate the rsyslog configuration and perform a basic TCP connectivity test.
+
+**Review the entire script before running it as root.** It changes host logging, audit, service, and firewall configuration. Verify its compatibility with your distribution and existing security policies.
+
+### 3. Run the script
+
+Use the actual filename in your repository. For example:
+
+```bash
+sudo bash ./path/to/log-source-setup.sh
+```
+
+Repeat the configuration on each Linux host you want to monitor.
+
+### 4. Verify log delivery
+
+Check that the required services are running on the source and that the source can reach the monitoring server on TCP port `5140`.
+
+The setup script's connectivity check verifies basic TCP reachability; it does not prove that every log format is parsed correctly or that every detection rule generates the expected alert.
+
+## Accessing the Dashboard
+
+Once the frontend and backend are configured and running, open the frontend URL supplied by your development server or deployment.
+
+Sign in with the initial administrator account created during first-run setup.
+
+Depending on the deployment and frontend routing, the dashboard communicates with the backend through:
+
+* REST endpoints under `/api`.
+* JWT Bearer authentication for API requests.
+* Socket.IO events named `log_entry` and `suspicious_event` for real-time updates.
+
+Do not expose the development server directly to untrusted networks.
+
+## Historical Log Analysis
+
+Forensight supports uploading a log file through the authenticated `POST /api/ingest` endpoint using multipart form data with a `file` field.
+
+The backend processes supported non-empty lines, attempts to parse them, stores accepted records with a historical source label, and runs the detection engine against parsed entries.
+
+A successful response includes counts for processed lines, saved entries, generated alerts, and line-level processing errors.
+
+Example request:
+
+```bash
+curl -X POST http://localhost:5000/api/ingest \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -F "file=@sample.log"
+```
+
+Replace `YOUR_ACCESS_TOKEN` with a valid access token and `sample.log` with a test log file.
+
+Historical detection results should be interpreted in context. Detection outcomes can depend on the supported log format, the order of records, and the detector's in-memory state.
+
+## Security and Access Control
+
+### Role-Based Permissions
+
+| Capability                    | Admin | Analyst | Viewer |
+| ----------------------------- | :---: | :-----: | :----: |
+| View logs and events          |  Yes  |   Yes   |   Yes  |
+| Update event status and notes |  Yes  |   Yes   |   No   |
+| Manage users                  |  Yes  |    No   |   No   |
+| Assign or reassign events     |  Yes  |    No   |   No   |
+| Ingest historical logs        |  Yes  |   Yes   |   No   |
+| Reload detection rules        |  Yes  |    No   |   No   |
+
+Event-specific ownership checks may further restrict which users can modify an investigation.
+
+### Authentication
+
+* Passwords are stored as bcrypt hashes.
+* Access tokens expire after eight hours by default.
+* Refresh tokens expire after 30 days by default.
+* The API returns authentication errors for missing, invalid, or expired access tokens.
+* The frontend clears its stored access token and redirects to login after an HTTP `401` response.
+
+The current logout endpoint is stateless: it does not revoke a token server-side. A discarded token can remain valid until expiration unless additional revocation controls are implemented.
+
+### Deployment Precautions
+
+Before using Forensight outside an isolated lab:
+
+* Replace the development secret with a strong environment-provided secret.
+* Restrict Flask CORS and Socket.IO origins to trusted frontend origins. The current reviewed configuration permits broad origins.
+* Deploy behind a suitable production WSGI/Socket.IO setup with HTTPS and WebSocket proxy support.
+* Restrict TCP port `5140` to authorized log sources using host or network firewall rules.
+* Avoid exposing the log receiver or database directly to the public internet.
+* Add input validation and upload-size limits for historical ingestion.
+* Consider backups, database retention, and monitoring-server access controls.
+* Review the audit-log design and enforce append-only integrity if tamper resistance is required.
+
+## Known Limitations
+
+* **Linux-focused telemetry:** The current implementation is designed around Linux logging and audit sources; it is not a general Windows endpoint monitoring platform.
+* **Parser coverage:** Only supported log formats and fields are reliably parsed. Unrecognized messages may be skipped or classified generically.
+* **Detection accuracy:** Rule-based indicators can generate false positives and may miss activity that is not represented in the collected telemetry.
+* **Network visibility:** Connection and scan detections depend on the audit and firewall rules configured on source systems.
+* **Local storage:** SQLite is suitable for a lab prototype but may become a bottleneck as concurrent writes and event volume grow.
+* **In-memory detection state:** Some detections rely on in-memory counters and tracking windows, so process restarts and historical ingestion can affect correlation behavior.
+* **Timestamp assumptions:** The application uses UTC-oriented timestamps, but timestamp parsing and browser-side timezone conversion should be validated across log formats and deployments.
+* **Transport security:** TCP log forwarding as configured does not itself provide encrypted or authenticated log transport.
+* **Token revocation:** Logout does not currently invalidate issued JWTs on the server.
+* **Production readiness:** The current development launch configuration, permissive cross-origin settings, and development secret fallback require hardening before production use.
 
 ## Future Improvements
 
-Potential areas for further development include:
+Potential next steps include:
 
-* Expanded detection coverage and rule testing.
-* Improved event correlation across multiple hosts.
-* More detailed alert context and investigation timelines.
-* Automated regression testing for detection rules.
-* Additional event sources and normalization support.
-* Deployment hardening, monitoring, and operational documentation.
-* Performance and scalability improvements for larger environments.
-
-This roadmap is indicative; items can be removed or updated to reflect the project's actual development plans.
+* Persistent detection state and more robust event correlation.
+* Better parser coverage, including additional Linux distributions and log formats.
+* Detection testing with reproducible attack simulations and known-good baselines.
+* More comprehensive timestamp normalization and event deduplication.
+* Configurable event retention and database backup procedures.
+* Improved ingestion validation, upload limits, and error reporting.
+* Token revocation and stronger session management.
+* Production deployment configuration with restricted origins and encrypted transport.
+* More scalable storage for higher-volume environments.
+* Automated tests for detection rules, API permissions, and investigation workflows.
+* Additional evidence enrichment and clearer analyst guidance for each detection.
 
 ## Author
 
 **Charles Mwangi Kamau**
 
-Software Engineering graduate focused on cybersecurity, security operations, digital forensics, and security-focused software development.
+* GitHub: [@33Charles](https://github.com/33Charles)
+* Project repository: [33Charles/forensight](https://github.com/33Charles/forensight)
 
-* **GitHub:** [33Charles](https://github.com/33Charles)
-* **Project repository:** [33Charles/forensight](https://github.com/33Charles/forensight)
-
----
-
-*Forensight is a practical security engineering project intended for authorized monitoring, security testing, and educational use.*
+Forensight was developed as a practical project exploring Linux log collection, security event analysis, rule-based threat detection, and security investigation workflows.
