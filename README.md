@@ -386,7 +386,7 @@ The script can:
 sudo  ./forensight-setup.sh
 ```
 
-![Running forensight-setup.sh](image-1.png)
+![Running forensight-setup.sh](imgs/image-1.png)
 
 Repeat the configuration on each Linux host you want to monitor.
 
@@ -402,7 +402,7 @@ Once the frontend and backend are configured and running, open the frontend URL 
 
 Sign in with the initial administrator account created during first-run setup.
 
-![dashboard](image-2.png)
+![dashboard](imgs/image-2.png)
 
 
 ## Historical Log Analysis
@@ -411,11 +411,11 @@ Forensight supports uploading a log file through the authenticated `POST /api/in
 
 The backend processes supported non-empty lines, attempts to parse them, stores accepted records with a historical source label, and runs the detection engine against parsed entries.
 
-![ingest log file ui](image-3.png)
+![ingest log file ui](imgs/image-3.png)
 
 A successful response includes counts for processed lines, saved entries, generated alerts, and line-level processing errors.
 
-![alt text](image-4.png)
+![alt text](imgs/image-4.png)
 
 
 Historical detection results should be interpreted in context. Detection outcomes can depend on the supported log format, the order of records, and the detector's in-memory state.
@@ -424,7 +424,7 @@ Historical detection results should be interpreted in context. Detection outcome
 
 The Security Events page (`/events`) is the central investigation interface in Forensight. It brings together suspicious events generated from live Linux log monitoring and historical log analysis, providing a workspace for reviewing alerts, investigating activity, and managing the investigation lifecycle.
 
-![alt text](image-5.png)
+![alt text](imgs/image-5.png)
 
 ### Event Monitoring
 
@@ -442,7 +442,7 @@ Forensight supports two ways to explore security events:
 * **List view:** Review individual events in a sortable, paginated table.
 * **Grouped view:** Organize events by selected fields, such as event type, source IP, username, or target host. Groups display event counts, status breakdowns, and the highest severity within each group.
 
-![Group View](image-6.png)
+![Group View](imgs/image-6.png)
 
 Grouped view also supports expanding groups to inspect individual events and applying bulk status changes.
 
@@ -473,7 +473,7 @@ Analyst notes support recording investigative findings, and ownership restrictio
 
 Forensight maintains an event audit history covering actions such as event creation, status changes, assignment, reassignment, and note updates. The interface presents these actions chronologically, making it easier to follow how an event was handled.
 
-![alt text](image-7.png)
+![alt text](imgs/image-7.png)
 
 ### Related Events and Deep Linking
 
@@ -501,57 +501,24 @@ Together, these capabilities make the Events page the primary workspace for movi
 
 Event-specific ownership checks may further restrict which users can modify an investigation.
 
-### Authentication
-
-* Passwords are stored as bcrypt hashes.
-* Access tokens expire after eight hours by default.
-* Refresh tokens expire after 30 days by default.
-* The API returns authentication errors for missing, invalid, or expired access tokens.
-* The frontend clears its stored access token and redirects to login after an HTTP `401` response.
-
-The current logout endpoint is stateless: it does not revoke a token server-side. A discarded token can remain valid until expiration unless additional revocation controls are implemented.
-
-### Deployment Precautions
-
-Before using Forensight outside an isolated lab:
-
-* Replace the development secret with a strong environment-provided secret.
-* Restrict Flask CORS and Socket.IO origins to trusted frontend origins. The current reviewed configuration permits broad origins.
-* Deploy behind a suitable production WSGI/Socket.IO setup with HTTPS and WebSocket proxy support.
-* Restrict TCP port `5140` to authorized log sources using host or network firewall rules.
-* Avoid exposing the log receiver or database directly to the public internet.
-* Add input validation and upload-size limits for historical ingestion.
-* Consider backups, database retention, and monitoring-server access controls.
-* Review the audit-log design and enforce append-only integrity if tamper resistance is required.
-
 ## Known Limitations
 
-* **Linux-focused telemetry:** The current implementation is designed around Linux logging and audit sources; it is not a general Windows endpoint monitoring platform.
-* **Parser coverage:** Only supported log formats and fields are reliably parsed. Unrecognized messages may be skipped or classified generically.
-* **Detection accuracy:** Rule-based indicators can generate false positives and may miss activity that is not represented in the collected telemetry.
-* **Network visibility:** Connection and scan detections depend on the audit and firewall rules configured on source systems.
-* **Local storage:** SQLite is suitable for a lab prototype but may become a bottleneck as concurrent writes and event volume grow.
-* **In-memory detection state:** Some detections rely on in-memory counters and tracking windows, so process restarts and historical ingestion can affect correlation behavior.
-* **Timestamp assumptions:** The application uses UTC-oriented timestamps, but timestamp parsing and browser-side timezone conversion should be validated across log formats and deployments.
-* **Transport security:** TCP log forwarding as configured does not itself provide encrypted or authenticated log transport.
-* **Token revocation:** Logout does not currently invalidate issued JWTs on the server.
-* **Production readiness:** The current development launch configuration, permissive cross-origin settings, and development secret fallback require hardening before production use.
+* **Linux-focused telemetry:** Forensight is designed for Linux log sources, including system logs, `auditd`, and firewall-related events. It does not currently provide native Windows endpoint monitoring.
 
-## Future Improvements
+* **Parser coverage:** Log parsing supports specific formats and fields. Unsupported or malformed messages may be skipped, partially parsed, or handled without enough context for reliable detection.
 
-Potential next steps include:
+* **Detection accuracy:** Detection relies primarily on configurable, rule-based indicators. Legitimate administrative activity may trigger false positives, while threats that do not match existing rules or appear in unavailable telemetry may go undetected.
 
-* Persistent detection state and more robust event correlation.
-* Better parser coverage, including additional Linux distributions and log formats.
-* Detection testing with reproducible attack simulations and known-good baselines.
-* More comprehensive timestamp normalization and event deduplication.
-* Configurable event retention and database backup procedures.
-* Improved ingestion validation, upload limits, and error reporting.
-* Token revocation and stronger session management.
-* Production deployment configuration with restricted origins and encrypted transport.
-* More scalable storage for higher-volume environments.
-* Automated tests for detection rules, API permissions, and investigation workflows.
-* Additional evidence enrichment and clearer analyst guidance for each detection.
+* **Network visibility:** Network-related detections depend on the events recorded by configured audit and firewall rules on monitored hosts. Forensight does not independently capture all network traffic or guarantee visibility into every connection.
+
+* **Local database scalability:** Events and log metadata are stored in SQLite. This is appropriate for a lab or small deployment, but sustained ingestion, concurrent writes, and increasing data volume may affect performance and scalability.
+
+* **In-memory detection state:** Some detections depend on temporary in-memory counters and tracking windows. Restarting the receiver resets this state, and historical ingestion may produce different results from live monitoring because events are processed in a different context or order.
+
+* **Timestamp handling:** Timestamp interpretation depends on the source log format and parsing behavior. Differences in timezone conventions, missing timestamps, or browser-side timezone conversion may affect how event times are displayed and correlated.
+
+* **Log transport security:** The configured TCP log-forwarding setup does not inherently provide encryption or mutual authentication. Logs transmitted over untrusted networks may be exposed or susceptible to tampering.
+
 
 ## Author
 
@@ -560,4 +527,4 @@ Potential next steps include:
 * GitHub: [@33Charles](https://github.com/33Charles)
 * Project repository: [33Charles/forensight](https://github.com/33Charles/forensight)
 
-Forensight was developed as a practical project exploring Linux log collection, security event analysis, rule-based threat detection, and security investigation workflows.
+>*Forensight was developed as a practical project exploring Linux log collection, security event analysis, rule-based threat detection, and security investigation workflows.*
